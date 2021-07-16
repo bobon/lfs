@@ -8,6 +8,9 @@ set -e
 LFS_DISK=/dev/sdb1
 # 
 
+# 安装必须的软件
+ln -f -s /bin/bash /bin/sh
+
 # 您的宿主系统必须拥有下列软件，且版本不能低于我们给出的最低版本。对于大多数现代 Linux 发行版来说这不成问题。要注意的是，很多发行版会把软件的头文件放在单独的软件包中，
 # 这些软件包的名称往往是 “<软件包名>-devel” 或者 “<软件包名>-dev”。如果您的发行版为下列软件提供了这类软件包，一定要安装它们。 
 # 为了确定您的宿主系统拥有每个软件的合适版本，且能够编译程序，请运行下列脚本。
@@ -186,3 +189,99 @@ EOF
 # 为了完全准备好编译临时工具的环境，指示 shell 读取刚才创建的配置文件：
 source ~/.bash_profile
 
+
+# 概念  https://www.jianshu.com/p/62613863aed0
+# "build, haost, target"
+# build：构建 gcc 编译器的平台系统环境，编译该软件使用的平台。
+# host:：是执行 gcc 编译器的平台系统环境，该软件运行的平台。
+# target：是让 gcc 编译器产生能在什么格式运行的平台的系统环境，该软件处理的目标平台。
+# 三元组： CPU-供应商-内核-操作系统  比如对于 64 位系统输出应该是 x86_64-pc-linux-gnu
+
+# build与host不同是交叉编译器；build与target不同是交叉编译链；三者都相同则为本地编译。
+# 指定：- -build=X86, - -host=X86, - -target=X86
+#  使用X86下构建X86的gcc编译器，编译出能在X86下运行的程序。
+# 指定：- -build=X86, - -host=ARM, - -target=MIPS
+#  在X86下构建 gcc交叉编译器，在ARM上运行 gcc交叉编译器，编译出能在 MIPS 运行的可执行程序。
+
+
+# 编译交叉工具链
+# 编译的程序会被安装在 $LFS/tools 目录中，以将它们和后续章节中安装的文件分开。
+# 但是，本章中编译的库会被安装到它们的最终位置，因为这些库在我们最终要构建的系统中也存在。 
+
+# 切换到放着源码包的目录。
+cd $LFS/sources
+
+# (第一遍)安装交叉工具链中的汇编工具 Binutils, 首先构建 Binutils 相当重要，因为 Glibc 和 GCC 都会对可用的链接器和汇编器进行测试，以决定可以启用它们自带的哪些特性。
+binutils_xz=$(ls binutils*.tar.xz)
+tar -xf $binutils_xz
+cd ${binutils_xz:0:-7}
+# Binutils 文档推荐在一个专用的目录中构建 Binutils：
+mkdir -v build
+cd build
+
+# 配置编译，准备编译Binutils
+../configure --prefix=$LFS/tools       \
+             --with-sysroot=$LFS        \
+             --target=$LFS_TGT          \
+             --disable-nls              \
+             --disable-werror
+
+# 编译Binutils
+make
+# 安装Binutils
+make install -j1
+
+cd ../../
+rm -rf ${binutils_xz:0:-7}
+
+
+# (第一遍)安装交叉工具链中的 GCC , GCC 依赖于 GMP、MPFR 和 MPC 这三个包。由于宿主发行版未必包含它们，
+gcc_xz=$(ls gcc*.tar.xz)
+tar -xf $gcc_xz
+cd ${gcc_xz:0:-7}
+
+# 我们将它们和 GCC 一同构建。将它们都解压到 GCC 源码目录中，并重命名解压出的目录，这样 GCC 构建过程就能自动使用它们：
+tar -xf ../mpfr-*.tar.xz
+mv -v mpfr-* mpfr
+tar -xf ../gmp-*.tar.xz
+mv -v gmp-* gmp
+tar -xf ../mpc-*.tar.gz
+mv -v mpc-* mpc
+
+# 对于 x86_64 平台，还要设置存放 64 位库的默认目录为 “lib”：
+case $(uname -m) in
+  x86_64)
+    sed -e '/m64=/s/lib64/lib/' \
+        -i.orig gcc/config/i386/t-linux64
+ ;;
+esac
+# GCC 文档建议在一个专用目录中构建 GCC：
+mkdir -v build
+cd build
+#  准备编译 GCC：
+
+../configure                                       \
+    --target=$LFS_TGT                              \
+    --prefix=$LFS/tools                            \
+    --with-glibc-version=2.11                      \
+    --with-sysroot=$LFS                            \
+    --with-newlib                                  \
+    --without-headers                              \
+    --enable-initfini-array                        \
+    --disable-nls                                  \
+    --disable-shared                               \
+    --disable-multilib                             \
+    --disable-decimal-float                        \
+    --disable-threads                              \
+    --disable-libatomic                            \
+    --disable-libgomp                              \
+    --disable-libquadmath                          \
+    --disable-libssp                               \
+    --disable-libvtv                               \
+    --disable-libstdcxx                            \
+    --enable-languages=c,c++
+
+# 执行以下命令编译 GCC：
+make
+# 安装GCC软件包：
+make install
