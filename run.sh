@@ -760,7 +760,8 @@ install_tools_use_cc1 'xz' '--build=$(build-aux/config.guess) \
 # 因此我们必须显式地在配置选项中指定 CC_FOR_TARGET=$LFS_TGT-gcc。 
 ##
 
-# 安装 Binutils (第二遍编译)
+# 安装 Binutils (第二遍编译). 
+# 使用和其他LFS程序相同的 DESTDIR 安装 Binutils. 本地编译器 cc-lfs 的一部分.
 # 绕过导致 libctf.so 链接到宿主发行版 zlib 的问题
 install_tools_use_cc1 'binutils' '--build=$(../config.guess) \
     --disable-nls              \
@@ -769,6 +770,7 @@ install_tools_use_cc1 'binutils' '--build=$(../config.guess) \
     --enable-64-bit-bfd' '-j1' 'build' 'install -vm755 libctf/.libs/libctf.so.0.0.0 $LFS/usr/lib'
 
 # 安装 GCC (第二遍编译)
+# 使用和其他LFS程序相同的 DESTDIR 安装 GCC. 本地编译器 cc-lfs 的一部分.
 start_tool gcc 
 # 就像第一次构建 GCC 时一样，它需要 GMP、MPFR 和 MPC 三个包。解压它们的源码包，并将它们移动到 GCC 要求的目录名
 tar -xf ../mpfr-4.1.0.tar.xz
@@ -831,6 +833,7 @@ end_tool gcc
 ## 
 # 第三遍编译： 进入 Chroot 并构建其他临时工具
 ##
+
 # 安装一些软件包的构建机制所必须的工具，然后安装三个用于运行测试的软件包。这样，就解决了所有的循环依赖问题，
 # 我们可以使用“chroot”环境进行构建，它与宿主系统除正在运行的内核外完全隔离。
 # 为了隔离环境的正常工作，必须它与正在运行的内核之间建立一些通信机制。我们通过所谓的虚拟内核文件系统达成这一目的，
@@ -931,4 +934,132 @@ install -dv -m 1777 /tmp /var/tmp
 # 例如 /usr/local/games 和 /usr/share/games。我们只创建了必要的目录。不过，如果您需要的话可以自己创建这些可选目录。 
 
 # 创建必要的文件和符号链接 
+# 历史上，Linux 在 /etc/mtab 维护已经挂载的文件系统的列表。现代内核在内部维护该列表，并通过 /proc 文件系统将它展示
+# 给用户。为了满足那些需要 /etc/mtab 的工具，执行以下命令，创建符号链接：
+ln -sv /proc/self/mounts /etc/mtab
+
+# 创建一个基本的 /etc/hosts 文件，一些测试套件，以及 Perl 的一个配置文件将会使用它：
+cat > /etc/hosts << EOF
+"127.0.0.1 localhost $(hostname)" 
+::1        localhost
+EOF
+
+# 为了使得 root 能正常登录，而且用户名 “root” 能被正常识别，必须在文件 /etc/passwd 和 /etc/groups 中写入相关的条目。
+# 执行以下命令创建 /etc/passwd 文件：
+cat > /etc/passwd << "EOF"
+root:x:0:0:root:/root:/bin/bash
+bin:x:1:1:bin:/dev/null:/bin/false
+daemon:x:6:6:Daemon User:/dev/null:/bin/false
+messagebus:x:18:18:D-Bus Message Daemon User:/run/dbus:/bin/false
+uuidd:x:80:80:UUID Generation Daemon User:/dev/null:/bin/false
+nobody:x:99:99:Unprivileged User:/dev/null:/bin/false
+EOF
+# 以后再设置 root 用户的实际密码。 
+# 创建 /etc/group 文件：
+cat > /etc/group << "EOF"
+root:x:0:
+bin:x:1:daemon
+sys:x:2:
+kmem:x:3:
+tape:x:4:
+tty:x:5:
+daemon:x:6:
+floppy:x:7:
+disk:x:8:
+lp:x:9:
+dialout:x:10:
+audio:x:11:
+video:x:12:
+utmp:x:13:
+usb:x:14:
+cdrom:x:15:
+adm:x:16:
+messagebus:x:18:
+input:x:24:
+mail:x:34:
+kvm:x:61:
+uuidd:x:80:
+wheel:x:97:
+nogroup:x:99:
+users:x:999:
+EOF
+# 这里创建的用户组并不属于任何标准 —— 它们一部分是为了满足后面 Udev 配置的需要，另一部分借鉴了一些 Linux 发行
+# 版的通用惯例。另外，某些测试套件需要特定的用户或组。Linux Standard Base
+#  (LSB，可以在 http://refspecs.linuxfoundation.org/lsb.shtml 查看) 标准只推荐以组 ID 0 创建用户组 root，
+# 以及以组 ID 1 创建用户组 bin，其他组名和组 ID 由系统管理员自由分配，因为好的程序不会依赖组 ID 数字，而是使用组名。
+
+# 后续的一些测试需要使用一个普通用户。我们这里创建一个用户，在那一章的末尾再删除该用户。
+echo "tester:x:$(ls -n $(tty) | cut -d" " -f3):101::/home/tester:/bin/bash" >> /etc/passwd
+echo "tester:x:101:" >> /etc/group
+install -o tester -d /home/tester
+# 为了移除 “I have no name!” 提示符，需要打开一个新 shell。由于已经创建了文件 /etc/passwd 和 /etc/group，用户名和组名现在就可以正常解析了：
+# 注意这里使用了 +h 参数。它告诉 bash 不要使用内部的路径散列机制。如果没有指定该参数，bash 会记忆它执行过程序的路径。
+# 为了在安装新编译好的程序后马上使用它们，在本章和下一章中总是使用 +h。
+exec /bin/bash --login +h
+
+# login、agetty 和 init 等程序使用一些日志文件，以记录登录系统的用户和登录时间等信息。然而，这些程序不会创建不存在的
+# 日志文件。初始化日志文件，并为它们设置合适的访问权限：
+# 文件 /var/log/wtmp 记录所有的登录和登出，文件 /var/log/lastlog 记录每个用户最后登录的时间，
+# 文件 /var/log/faillog 记录所有失败的登录尝试，文件 /var/log/btmp 记录所有错误的登录尝试。 
+touch /var/log/{btmp,lastlog,faillog,wtmp}
+chgrp -v utmp /var/log/lastlog
+chmod -v 664  /var/log/lastlog
+chmod -v 600  /var/log/btmp
+# 文件 /run/utmp 记录当前登录的用户，它由引导脚本动态创建。
+
+
+# 第三遍编译。首先安装 libstdc++。之后临时性地安装工具链的正常工作所必须的程序。此后，
+# LFS目标系统的核心工具链成为自包含的本地工具链。最后，构建、测试并最终安装所有软件包，它们组成功能完整的系统。
+
+# 安装LFS目标系统的 Libstdc++.  GCC-11.1.0 中的 Libstdc++，对于Libstdc++本身来说是第二遍编译.
+# 使用第二遍编译时构建出来的本地编译器 cc-lfs ，在 chroot 环境中安装 Libstdc++ 
+# 在构建第二遍的 GCC时，我们不得不暂缓安装 C++ 标准库，因为当时没有编译器能够编译它。我们不能使用那一节构建的编译器，
+# 因为它是一个本地编译器，不应在 chroot 外使用，否则可能导致编译产生的库被宿主系统组件污染。
+# Libstdc++ 是 GCC 源代码的一部分。先解压 GCC 压缩包并切换到解压出来的 gcc-11.1.0 目录。 
+cd sources/  # 切换到源码目录
+
+start_tool() {
+  local tool_xz=$(ls ${1}*.tar.?z)
+  tar -xf $tool_xz
+  cd ${tool_xz:0:-7}
+}
+
+end_tool() {
+  cd ../
+  local tool_xz=$(ls ${1}*.tar.?z)
+  rm -rf ${tool_xz:0:-7}
+}
+
+start_tool gcc
+#  创建一个符号链接，允许在 GCC 源码树中构建 Libstdc++：
+ln -s gthr-posix.h libgcc/gthr-default.h
+# 为 Libstdc++ 创建一个单独的构建目录，并切换到该目录：
+mkdir -v build
+cd build
+# 准备编译 Libstdc++:
+../libstdc++-v3/configure            \
+    CXXFLAGS="-g -O2 -D_GNU_SOURCE"  \
+    --prefix=/usr                    \
+    --disable-multilib               \
+    --disable-nls                    \
+    --host=$(uname -m)-lfs-linux-gnu \
+    --disable-libstdcxx-pch
+# 运行以下命令编译 Libstdc++：
+make
+# 安装这个库：
+make install
+cd ..
+end_tool gcc 
+
+# 安装 Gettext. Gettext 软件包包含国际化和本地化工具，它们允许程序在编译时加入 NLS (本地语言支持) 功能，
+# 使它们能够以用户的本地语言输出消息。 
+# 对于我们的临时工具，只要安装 Gettext 中的三个程序即可。
+start_tool gettext
+# 准备编译 Gettext：
+./configure --disable-shared
+# 编译该软件包：
+make
+# 安装 msgfmt，msgmerge，以及 xgettext 这三个程序：
+cp -v gettext-tools/src/{msgfmt,msgmerge,xgettext} /usr/bin
+end_tool gettext 
 
