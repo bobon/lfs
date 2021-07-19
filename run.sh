@@ -1030,6 +1030,44 @@ end_tool() {
   rm -rf ${tool_xz:0:-7}
 }
 
+install_tools_use_cc_lfs () {
+  local pkg_name=$1
+  local conf=$2
+  local mk_conf=$3
+  local mk_build=$4
+  echo "install $pkg_name"
+  echo "./configure --prefix=/usr   \
+              $conf"
+  read
+  echo "make install $mk_conf"
+  read
+  
+  start_tool $pkg_name 
+  echo "prepare compile $pkg_name"  
+  if [ -z "$mk_build" ]; then
+    bash -c "./configure --prefix=/usr   \
+              $conf"
+  else 
+    mkdir -v build
+    cd build
+    bash -c "../configure --prefix=/usr   \
+              $conf"
+  fi
+  echo "compile $pkg_name"
+  make
+  echo "install $pkg_name"
+  bash -c "make install $mk_conf"
+  if [ ! -z "$5" ]; then
+    echo "$5"
+    read
+    bash -c "$5"
+  fi
+  if [ ! -z "$mk_build" ]; then
+    cd ..
+  fi
+  end_tool patch
+}
+
 start_tool gcc
 #  创建一个符号链接，允许在 GCC 源码树中构建 Libstdc++：
 ln -s gthr-posix.h libgcc/gthr-default.h
@@ -1062,4 +1100,101 @@ make
 # 安装 msgfmt，msgmerge，以及 xgettext 这三个程序：
 cp -v gettext-tools/src/{msgfmt,msgmerge,xgettext} /usr/bin
 end_tool gettext 
+
+# 安装 Bison. Bison 软件包包含语法分析器生成器。 
+install_tools_use_cc_lfs 'bison' '--docdir=/usr/share/doc/bison-3.7.6'
+
+# 安装 Perl. Perl 软件包包含实用报表提取语言。 
+start_tool 'perl'
+# 准备编译 Perl：
+sh Configure -des                                        \
+             -Dprefix=/usr                               \
+             -Dvendorprefix=/usr                         \
+             -Dprivlib=/usr/lib/perl5/5.34/core_perl     \
+             -Darchlib=/usr/lib/perl5/5.34/core_perl     \
+             -Dsitelib=/usr/lib/perl5/5.34/site_perl     \
+             -Dsitearch=/usr/lib/perl5/5.34/site_perl    \
+             -Dvendorlib=/usr/lib/perl5/5.34/vendor_perl \
+             -Dvendorarch=/usr/lib/perl5/5.34/vendor_perl
+# 编译该软件包：
+make
+# 安装该软件包：
+make install
+end_tool 'perl'
+
+# 安装 Python-3.9.6  
+install_tools_use_cc_lfs 'Python' '--enable-shared \
+            --without-ensurepip'
+
+# 安装 Texinfo. Texinfo 软件包包含阅读、编写和转换 info 页面的程序
+install_tools_use_cc_lfs 'texinfo'
+
+# 安装 Util-linux. Util-linux 软件包包含一些工具程序。
+start_tool 'util-linux-2'
+# FHS 建议使用 /var/lib/hwclock 目录，而非一般的 /etc 目录作为 adjtime 文件的位置。首先创建该目录：
+mkdir -pv /var/lib/hwclock
+# 准备编译 Util-linux：
+./configure ADJTIME_PATH=/var/lib/hwclock/adjtime    \
+            --libdir=/usr/lib    \
+            --docdir=/usr/share/doc/util-linux-2.37 \
+            --disable-chfn-chsh  \
+            --disable-login      \
+            --disable-nologin    \
+            --disable-su         \
+            --disable-setpriv    \
+            --disable-runuser    \
+            --disable-pylibmount \
+            --disable-static     \
+            --without-python     \
+            runstatedir=/run
+# 编译该软件包：
+make
+# 安装该软件包：
+make install
+end_tool 'util-linux-2'
+
+# 清理和备份临时系统 
+# libtool .la 文件仅在链接到静态库时有用。在使用动态共享库时它们没有意义，甚至可能有害，特别是在使用
+# 非 autotools 构建系统时容易产生问题。继续在 chroot 环境中运行命令，删除它们：
+find /usr/{lib,libexec} -name \*.la -delete
+# 删除临时工具的文档，以防止它们进入最终构建的系统，并节省大约 35 MB：
+rm -rf /usr/share/{info,man,doc}/*
+# 一旦您开始在后续步骤中安装软件包，临时工具就会被覆盖。因此，按照下面描述的步骤备份临时工具可能是个好主意。
+# 以下备份临时工具的步骤在 chroot 环境之外进行
+exit   #退出 chroot 环境
+# 解除挂载内核虚拟文件系统, 以 root 身份执行. 注意环境变量 LFS 会自动为用户 lfs 设定，但可能没有为 root 设定
+# 因此需要指定-E 参数，确保root身份执行命令时有LFS环境变量。
+[ ! -z "$LFS" ]
+sudo -E umount $LFS/dev{/pts,}
+sudo -E umount $LFS/{sys,proc,run}
+# 移除无用内容. 到现在为止，已经构建的可执行文件和库包含大约 90MB 的无用调试符号。
+# 从二进制文件移除调试符号： 
+# 注意不要对库文件使用 --strip-unneeded 选项。这会损坏静态库，结果工具链软件包都要重新构建。
+sudo -E strip --strip-debug $LFS/usr/lib/*
+sudo -E strip --strip-unneeded $LFS/usr/{,s}bin/*
+sudo -E strip --strip-unneeded $LFS/tools/bin/*
+# 备份
+# 现在已经建立了必要的工具，可以考虑备份它们。如果对之前构建的软件包进行的各项检查都没有发现问题，即可判定您的临时工具状态良好，可以将它们备份起来供以后重新使用。如果在后续章节发生了无法挽回的错误，通常来说，最好的办法是删除所有东西，然后 (更小心地) 从头开始。不幸的是，这也会删除所有临时工具。为了避免浪费时间对已经构建成功的部分进行返工，可以准备一个备份。 
+cd $LFS && sudo -E tar -cJpf $HOME/lfs-temp-tools-r10.1-121.tar.xz .
+# 还原
+# 如果您犯下了一些错误，并不得不重新开始构建，您可以使用备份档案还原临时工具，节约一些工作时间。由于源代码在 $LFS 中，它们也包含在备份档案内，因此不需要重新下载它们。在确认 $LFS设定正确后，运行以下命令从备份档案进行还原：
+#cd $LFS && sudo -E rm -rf ./* && sudo -E tar -xpf $HOME/lfs-temp-tools-r10.1-121.tar.xz
+
+# 重新挂载挂载内核虚拟文件系统，并重新进入 chroot 环境。
+sudo mount -v --bind /dev $LFS/dev
+sudo mount -v --bind /dev/pts $LFS/dev/pts
+sudo mount -vt proc proc $LFS/proc
+sudo mount -vt sysfs sysfs $LFS/sys
+sudo mount -vt tmpfs tmpfs $LFS/run
+sudo chroot "$LFS" /usr/bin/env -i   \
+    HOME=/root                  \
+    TERM="$TERM"                \
+    PS1='(lfs chroot) \u:\w\$ ' \
+    PATH=/usr/bin:/usr/sbin \
+    /bin/bash --login +h
+
+
+
+
+# 真正开始构造 LFS 系统。
 
