@@ -454,10 +454,6 @@ rm -v dummy.c a.out
 # 后续构建各软件包的过程可以作为对工具链是否正常构建的额外检查。如果 一些软件包，特别是第二遍编译时，Binutils 或者 
 # GCC 不能构建，说明在之前第一遍编译时，安装 Binutils，GCC，或者 Glibc 时出了问题。 
 
-# 运行 Glibc 的测试套件是很关键的。在任何情况下都不要跳过这个测试。
-# 通常会有一些测试不能通过，但是一般你可以忽略任何下面列出来的失败项。现在开始测试编译结果：
-#make check
-
 #  现在我们的交叉工具链已经构建完成，可以完成 limits.h 头文件的安装。为此，运行 GCC 开发者提供的一个工具：
 $LFS/tools/libexec/gcc/$LFS_TGT/11.1.0/install-tools/mkheaders
 
@@ -1208,4 +1204,339 @@ sudo chroot "$LFS" /usr/bin/env -i   \
 #       tr -cd 0-9\\n | xargs -r ps u
 #   如果正在使用 OpenSSH 访问系统，且它链接到了被更新的库，则需要重启 sshd 服务，登出并重新登录，然后再次运行上述命令，确认没有进程使用被删除的库文件。
 
+cd sources/  # 切换到源码目录
+
+start_tool() {
+  local tool_xz=$(ls ${1}*.tar.?z)
+  tar -xf $tool_xz
+  cd ${tool_xz:0:-7}
+}
+
+end_tool() {
+  cd ../
+  local tool_xz=$(ls ${1}*.tar.?z)
+  rm -rf ${tool_xz:0:-7}
+}
+
+install_tools_to_lfs () {
+  local pkg_name=$1
+  local conf=$2
+  local mk_conf=$3
+  local check=$4
+  echo "install $pkg_name"
+  echo "./configure --prefix=/usr   \
+              $conf"
+  read
+  echo "make install $mk_conf"
+  read
+  
+  start_tool $pkg_name 
+  echo "prepare compile $pkg_name"  
+  bash -c "./configure --prefix=/usr   \
+         $conf"
+  echo "compile $pkg_name"
+  make
+  if [ ! -z "$check" ]; then
+    echo "make check"
+    read
+    make check
+  fi
+  echo "install $pkg_name"
+  bash -c "make install $mk_conf"
+  if [ ! -z "$5" ]; then
+    echo "$5"
+    read
+    bash -c "$5"
+  fi
+  end_tool patch
+}
+
+# 安装 Man-pages. Man-pages 软件包包含 2,200 多个 man 页面。
+start_tool man-pages
+# 安装 Man-pages：
+make prefix=/usr install
+end_tool man-pages
+
+# 安装 Iana-Etc. Iana-Etc 软件包包含网络服务和协议的数据。
+start_tool iana-etc
+cp services protocols /etc
+end_tool iana-etc
+
+# 安装 Glibc
+start_tool glibc
+# 某些 Glibc 程序使用与 FHS 不兼容的 /var/db 目录存放运行时数据。应用下列补丁，使得这些程序在 FHS 兼容的位置存储运行时数据：
+patch -Np1 -i ../glibc-2.33-fhs-1.patch
+# 修复导致 chroot 环境中应用程序出现故障的问题：
+sed -e '402a\      *result = local->data.services[database_index];' \
+    -i nss/nss_database.c
+# 修复使用 gcc-11.1 构建时出现的问题：
+sed 's/amx_/amx-/' -i sysdeps/x86/tst-cpu-features-supports.c
+mkdir -v build
+cd build
+# 准备编译 Glibc：
+../configure --prefix=/usr                            \
+             --disable-werror                         \
+             --enable-kernel=3.2                      \
+             --enable-stack-protector=strong          \
+             --with-headers=/usr/include              \
+             libc_cv_slibdir=/usr/lib
+# 编译该软件包：
+make
+# 运行 Glibc 的测试套件是很关键的。在任何情况下都不要跳过这个测试。
+# 通常来说，可能会有极少数测试不能通过，下面列出的失败结果一般可以安全地忽略。执行以下命令进行测试：
+make check
+# 在安装 Glibc 时，它会抱怨文件 /etc/ld.so.conf 不存在。尽管这是一条无害的消息，执行以下命令即可防止这个警告：
+touch /etc/ld.so.conf
+# 修正生成的 Makefile，跳过一个在 LFS 的不完整环境中会失败的完整性检查：
+sed '/test-installation/s@$(PERL)@echo not running@' -i ../Makefile
+# 安装该软件包：
+make install
+# 改正 ldd 脚本中硬编码的可执行文件加载器路径：
+sed '/RTLDLIST=/s@/usr@@g' -i /usr/bin/ldd
+# 安装 nscd 的配置文件和运行时目录：
+cp -v ../nscd/nscd.conf /etc/nscd.conf
+mkdir -pv /var/cache/nscd
+# 下面，安装一些 locale，它们可以使得系统用不同语言响应用户请求。这些 locale 都不是必须的，但是如果缺少了它们
+# 中的某些，在将来运行软件包的测试套件时，可能跳过重要的测试。 
+# 可以用 localedef 程序安装单独的 locale。例如，下面的第一个 localedef 命令将 /usr/share/i18n/locales/cs_CZ 中的字符集无关 locale 定义和 /usr/share/i18n/charmaps/UTF-8.gz 中的字符映射定义组合起来，并附加到 /usr/lib/locale/locale-archive 文件。以下命令将会安装能够覆盖测试所需的最小 locale 集合：
+mkdir -pv /usr/lib/locale
+localedef -i POSIX -f UTF-8 C.UTF-8 2> /dev/null || true
+localedef -i cs_CZ -f UTF-8 cs_CZ.UTF-8
+localedef -i de_DE -f ISO-8859-1 de_DE
+localedef -i de_DE@euro -f ISO-8859-15 de_DE@euro
+localedef -i de_DE -f UTF-8 de_DE.UTF-8
+localedef -i el_GR -f ISO-8859-7 el_GR
+localedef -i en_GB -f ISO-8859-1 en_GB
+localedef -i en_GB -f UTF-8 en_GB.UTF-8
+localedef -i en_HK -f ISO-8859-1 en_HK
+localedef -i en_PH -f ISO-8859-1 en_PH
+localedef -i en_US -f ISO-8859-1 en_US
+localedef -i en_US -f UTF-8 en_US.UTF-8
+localedef -i es_ES -f ISO-8859-15 es_ES@euro
+localedef -i es_MX -f ISO-8859-1 es_MX
+localedef -i fa_IR -f UTF-8 fa_IR
+localedef -i fr_FR -f ISO-8859-1 fr_FR
+localedef -i fr_FR@euro -f ISO-8859-15 fr_FR@euro
+localedef -i fr_FR -f UTF-8 fr_FR.UTF-8
+localedef -i is_IS -f ISO-8859-1 is_IS
+localedef -i is_IS -f UTF-8 is_IS.UTF-8
+localedef -i it_IT -f ISO-8859-1 it_IT
+localedef -i it_IT -f ISO-8859-15 it_IT@euro
+localedef -i it_IT -f UTF-8 it_IT.UTF-8
+localedef -i ja_JP -f EUC-JP ja_JP
+localedef -i ja_JP -f SHIFT_JIS ja_JP.SIJS 2> /dev/null || true
+localedef -i ja_JP -f UTF-8 ja_JP.UTF-8
+localedef -i nl_NL@euro -f ISO-8859-15 nl_NL@euro
+localedef -i ru_RU -f KOI8-R ru_RU.KOI8-R
+localedef -i ru_RU -f UTF-8 ru_RU.UTF-8
+localedef -i se_NO -f UTF-8 se_NO.UTF-8
+localedef -i ta_IN -f UTF-8 ta_IN.UTF-8
+localedef -i tr_TR -f UTF-8 tr_TR.UTF-8
+localedef -i zh_CN -f GB18030 zh_CN.GB18030
+localedef -i zh_HK -f BIG5-HKSCS zh_HK.BIG5-HKSCS
+localedef -i zh_TW -f UTF-8 zh_TW.UTF-8
+
+# 配置 Glibc 
+# 创建 nsswitch.conf 
+# 由于 Glibc 的默认值在网络环境下不能很好地工作，需要创建配置文件 /etc/nsswitch.conf。
+# 执行以下命令创建新的 /etc/nsswitch.conf：
+cat > /etc/nsswitch.conf << "EOF"
+# Begin /etc/nsswitch.conf
+
+passwd: files
+group: files
+shadow: files
+
+hosts: files dns
+networks: files
+
+protocols: files
+services: files
+ethers: files
+rpc: files
+
+# End /etc/nsswitch.conf
+EOF
+
+# 添加时区数据 
+# 输入以下命令，安装并设置时区数据：
+tar -xf ../../tzdata2021a.tar.gz
+
+ZONEINFO=/usr/share/zoneinfo
+mkdir -pv $ZONEINFO/{posix,right}
+
+for tz in etcetera southamerica northamerica europe africa antarctica  \
+          asia australasia backward; do
+    zic -L /dev/null   -d $ZONEINFO       ${tz}
+    zic -L /dev/null   -d $ZONEINFO/posix ${tz}
+    zic -L leapseconds -d $ZONEINFO/right ${tz}
+done
+
+cp -v zone.tab zone1970.tab iso3166.tab $ZONEINFO
+zic -d $ZONEINFO -p America/New_York
+unset ZONEINFO
+ln -sfv /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+
+# 配置动态加载器 
+# 默认情况下，动态加载器 (/lib/ld-linux.so.2) 在 /lib 和 /usr/lib 中搜索程序运行时需要的动态库。然而，如果在除了 /lib 和 /usr/lib 以外的其他目录中有动态库，为了使动态加载器能够找到它们，需要把这些目录添加到文件 /etc/ld.so.conf 中。有两个目录 /usr/local/lib 和 /opt/lib 经常包含附加的共享库，所以现在将它们添加到动态加载器的搜索目录中。
+# 运行以下命令，创建一个新的 /etc/ld.so.conf：
+cat > /etc/ld.so.conf << "EOF"
+# Begin /etc/ld.so.conf
+/usr/local/lib
+/opt/lib
+
+EOF
+# 如果希望的话，动态加载器也可以搜索一个目录，并将其中的文件包含在 ld.so.conf 中。通常包含文件目录中的文件只有一行，指定一个期望的库文件目录。如果需要这项功能，执行以下命令：
+cat >> /etc/ld.so.conf << "EOF"
+# Add an include directory
+include /etc/ld.so.conf.d/*.conf
+
+EOF
+mkdir -pv /etc/ld.so.conf.d
+cd ..
+end_tool glibc
+
+
+# 安装 Zlib. Zlib 软件包包含一些程序使用的压缩和解压缩子程序。 
+install_tools_to_lfs 'zlib' '' '' check
+# 删除无用的静态库： 
+rm -fv /usr/lib/libz.a
+
+# 安装 Bzip2. Bzip2 软件包包含用于压缩和解压缩文件的程序。使用 bzip2 压缩文本文件可以获得比传统的 gzip 优秀许多的压缩比。 
+start_tool bzip2
+# 应用一个补丁，以安装该软件包的文档：
+patch -Np1 -i ../bzip2-1.0.8-install_docs-1.patch
+# 以下命令保证安装的符号链接是相对的：
+sed -i 's@\(ln -s -f \)$(PREFIX)/bin/@\1@' Makefile
+# 确保 man 页面被安装到正确位置：
+sed -i "s@(PREFIX)/man@(PREFIX)/share/man@g" Makefile
+# 执行以下命令，准备编译 Bzip2：
+make -f Makefile-libbz2_so
+make clean
+# 编译并测试该软件包：
+make
+# 安装软件包中的程序：
+make PREFIX=/usr install
+# 安装共享库：
+cp -av libbz2.so.* /usr/lib
+ln -sv libbz2.so.1.0.8 /usr/lib/libbz2.so
+# 安装链接到共享库的 bzip2 二进制程序到 /bin 目录，并将两个和 bzip2 完全相同的文件替换成符号链接：
+cp -v bzip2-shared /usr/bin/bzip2
+for i in /usr/bin/{bzcat,bunzip2}; do
+  ln -sfv bzip2 $i
+done
+# 删除无用的静态库：
+rm -fv /usr/lib/libbz2.a
+end_tool bzip2
+
+# 安装 Xz. Xz 软件包包含文件压缩和解压缩工具，它能够处理 lzma 和新的 xz 压缩文件格式。使用 xz 压缩文本文件，可以得到比传统的 gzip 或 bzip2 更好的压缩比。 
+install_tools_to_lfs 'xz' '--disable-static \
+            --docdir=/usr/share/doc/xz-5.2.5' '' check
+
+# 安装 Zstd. Zstandard 是一种实时压缩算法，提供了较高的压缩比。它具有很宽的压缩比/速度权衡范围，同时支持具有非常快速的解压缩。
+start_tool zstd
+# 编译该软件包
+make
+# 运行以下命令，以测试编译结果：
+make check
+# 安装该软件包：
+make prefix=/usr install
+# 删除静态库：
+rm -v /usr/lib/libzstd.a
+end_tool zstd
+
+# 安装 File. File 软件包包含用于确定给定文件类型的工具。 
+install_tools_to_lfs 'file' '' '' check
+
+# 安装 Readline. Readline 软件包包含一些提供命令行编辑和历史记录功能的库。 
+start_tool readline
+# 重新安装 Readline 会导致旧版本的库被重命名为 <库名称>.old。这一般不是问题，但某些情况下会触发 ldconfig 的一个链接 bug。运行下面的两条 sed 命令防止这种情况：
+sed -i '/MV.*old/d' Makefile.in
+sed -i '/{OLDSUFF}/c:' support/shlib-install
+# 准备编译 Readline：
+./configure --prefix=/usr    \
+            --disable-static \
+            --with-curses    \
+            --docdir=/usr/share/doc/readline-8.1
+# 编译该软件包：
+make SHLIB_LIBS="-lncursesw"
+# 安装该软件包：
+make SHLIB_LIBS="-lncursesw" install
+# 如果您希望的话，可以安装文档：
+install -v -m644 doc/*.{ps,pdf,html,dvi} /usr/share/doc/readline-8.1
+end_tool readline
+
+# 安装 M4. M4 软件包包含一个宏处理器。 
+install_tools_to_lfs 'm4' '' '' check
+
+#安装 Bc. Bc 软件包包含一个任意精度数值处理语言。
+start_tool bc 
+# 准备编译 Bc：
+CC=gcc ./configure --prefix=/usr -G -O3
+# 编译该软件包：
+make
+# 为了测试 bc，运行：
+make test
+# 安装该软件包：
+make install
+end_tool bc
+
+# 安装 Flex. Flex 软件包包含一个工具，用于生成在文本中识别模式的程序。
+install_tools_to_lfs 'flex' '--docdir=/usr/share/doc/flex-2.6.4 \
+            --disable-static' '' check
+# 个别程序还不知道 flex，并试图去运行它的前身 lex。为了支持这些程序，创建一个名为 lex 的符号链接，它运行 flex 并启动其模拟 lex 的模式：
+ln -sv flex /usr/bin/lex
+
+# 安装 Tcl. Tcl 软件包包含工具命令语言，它是一个可靠的通用脚本语言。Except 软件包是用 Tcl 语言编写的.
+tar -zxf tcl*src.tar.gz
+cd tcl8.6.11
+# 为了支持 Binutils 和 GCC 等软件包测试套件的运行，需要安装这个软件包和接下来的两个 (Expect 与 DejaGNU)。为了测试目的安装三个软件包看似浪费，但是只有运行了测试，才能放心地确定多数重要工具可以正常工作，即使测试不是必要的。我们必须安装这些软件包，才能执行本章中的测试套件。
+# 首先，运行以下命令解压文档：
+tar -xf ../tcl8.6.11-html.tar.gz --strip-components=1
+# 准备编译 Tcl：
+SRCDIR=$(pwd)
+cd unix
+./configure --prefix=/usr           \
+            --mandir=/usr/share/man \
+            $([ "$(uname -m)" = x86_64 ] && echo --enable-64bit)
+# 构建该软件包：
+make
+sed -e "s|$SRCDIR/unix|/usr/lib|" \
+    -e "s|$SRCDIR|/usr/include|"  \
+    -i tclConfig.sh
+
+sed -e "s|$SRCDIR/unix/pkgs/tdbc1.1.2|/usr/lib/tdbc1.1.2|" \
+    -e "s|$SRCDIR/pkgs/tdbc1.1.2/generic|/usr/include|"    \
+    -e "s|$SRCDIR/pkgs/tdbc1.1.2/library|/usr/lib/tcl8.6|" \
+    -e "s|$SRCDIR/pkgs/tdbc1.1.2|/usr/include|"            \
+    -i pkgs/tdbc1.1.2/tdbcConfig.sh
+
+sed -e "s|$SRCDIR/unix/pkgs/itcl4.2.1|/usr/lib/itcl4.2.1|" \
+    -e "s|$SRCDIR/pkgs/itcl4.2.1/generic|/usr/include|"    \
+    -e "s|$SRCDIR/pkgs/itcl4.2.1|/usr/include|"            \
+    -i pkgs/itcl4.2.1/itclConfig.sh
+
+unset SRCDIR
+#“make”命令之后的若干“sed”命令从配置文件中删除构建目录，并用安装目录替换它们。构建 LFS 的后续过程不对此严格要求，但如果之后构建使用 Tcl 的软件包，则可能需要这样的操作。 
+# 运行以下命令，以测试编译结果：
+make test
+# 安装该软件包：
+make install
+# 将安装好的库加上写入权限，以便将来移除调试符号：
+chmod -v u+w /usr/lib/libtcl8.6.so
+# 安装 Tcl 的头文件。下一个软件包 Expect 需要它们才能构建。
+make install-private-headers
+# 创建一个必要的符号链接：
+ln -sfv tclsh8.6 /usr/bin/tclsh
+# 最后，重命名一个与 Perl man 页面文件名冲突的 man 页面：
+mv /usr/share/man/man3/{Thread,Tcl_Thread}.3
+cd ../../
+rm -rf tcl8.6.11
+
+# 安装 Expect. Expect 软件包包含通过脚本控制的对话，自动化 telnet，ftp，passwd，fsck，rlogin，以及 tip 等交互应用的工具。Expect 对于测试这类程序也很有用，它简化了这类通过其他方式很难完成的工作。DejaGnu 框架是使用 Expect 编写的。 
+install_tools_to_lfs 'expect' '--with-tcl=/usr/lib     \
+            --enable-shared         \
+            --mandir=/usr/share/man \
+            --with-tclinclude=/usr/include' '' check
+ln -svf expect5.45.4/libexpect5.45.4.so /usr/lib
 
