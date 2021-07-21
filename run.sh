@@ -1540,3 +1540,230 @@ install_tools_to_lfs 'expect' '--with-tcl=/usr/lib     \
             --with-tclinclude=/usr/include' '' check
 ln -svf expect5.45.4/libexpect5.45.4.so /usr/lib
 
+# 安装 DejaGNU. DejaGnu 包含使用 GNU 工具运行测试套件的框架。它是用 expect 编写的，后者又使用 Tcl (工具命令语言)。
+start_tool dejagnu
+# DejaGNU 开发者建议在专用的目录中进行构建：
+mkdir -v build
+cd build
+# 准备编译 DejaGNU：
+../configure --prefix=/usr
+makeinfo --html --no-split -o doc/dejagnu.html ../doc/dejagnu.texi
+makeinfo --plaintext       -o doc/dejagnu.txt  ../doc/dejagnu.texi
+# 构建并安装该软件包：
+make install
+install -v -dm755  /usr/share/doc/dejagnu-1.6.3
+install -v -m644   doc/dejagnu.{html,txt} /usr/share/doc/dejagnu-1.6.3
+# 如果要测试该软件包，执行：
+make check
+cd ..
+end_tool dejagnu 
+
+# 安装 Binutils. Binutils 包含汇编器、链接器以及其他用于处理目标文件的工具。 
+# 进行简单测试，确认伪终端 (PTY) 在 chroot 环境中能正常工作：
+# 该命令应该输出 spawn ls
+expect -c "spawn ls" | grep 'spawn ls'
+start_tool binutils
+# 删除一项导致测试套件无法完成的测试：
+sed -i '/@\tincremental_copy/d' gold/testsuite/Makefile.in
+# Binutils 文档推荐在一个专用的构建目录中构建 Binutils：
+mkdir -v build
+cd build
+# 准备编译 Binutils：
+../configure --prefix=/usr       \
+             --enable-gold       \
+             --enable-ld=default \
+             --enable-plugins    \
+             --enable-shared     \
+             --disable-werror    \
+             --enable-64-bit-bfd \
+             --with-system-zlib
+# 编译该软件包：
+make tooldir=/usr
+# 测试编译结果：
+make -k check
+# 安装该软件包：
+make tooldir=/usr install -j1
+# 删除无用的静态库：
+rm -fv /usr/lib/lib{bfd,ctf,ctf-nobfd,opcodes}.a
+cd ..
+end_tool binutils 
+
+# 安装 GMP. GMP 软件包包含提供任意精度算术函数的数学库。
+start_tool gmp
+# 准备编译 GMP：
+./configure --prefix=/usr    \
+            --enable-cxx     \
+            --disable-static \
+            --docdir=/usr/share/doc/gmp-6.2.1
+# 编译该软件包，并生成 HTML 文档：
+make
+make html
+# 测试编译结果：
+make check 2>&1 | tee gmp-check-log
+# 务必确认测试套件中的 197 个测试全部通过。运行以下命令检验结果：
+awk '/# PASS:/{total+=$3} ; END{print total}' gmp-check-log | grep 197
+# 安装该软件包及其文档：
+make install
+make install-html
+end_tool gmp 
+
+
+install_tools_to_lfs () {
+  local pkg_name=$1
+  local conf=$2
+  local mk_conf=$3
+  local install_conf=$4
+  echo "install $pkg_name"
+  echo "./configure --prefix=/usr   \
+              $conf"
+  read
+  echo "make $mk_conf"
+  read
+  echo "make install $install_conf"
+  read
+  
+  start_tool $pkg_name 
+  echo "prepare compile $pkg_name"  
+  bash -c "./configure --prefix=/usr   \
+         $conf"
+  echo "compile $pkg_name"
+  bash -c "make $mk_conf"
+  echo "install $pkg_name"
+  bash -c "make install $install_conf"
+  if [ ! -z "$5" ]; then
+    echo "$5"
+    read
+    bash -c "$5"
+  fi
+  end_tool patch
+}
+
+# 安装 MPFR. MPFR 软件包包含多精度数学函数。 
+install_tools_to_lfs 'mpfr' '--disable-static     \
+            --enable-thread-safe \
+            --docdir=/usr/share/doc/mpfr-4.1.0' '&& make html && make check' '&& make install-html'
+
+# 安装 MPC. MPC 软件包包含一个任意高精度，且舍入正确的复数算术库。
+install_tools_to_lfs 'mpc' '--disable-static \
+            --docdir=/usr/share/doc/mpc-1.2.1' '&& make html && make check' '&& make install-html'
+
+# 安装 Attr. Attr 软件包包含管理文件系统对象扩展属性的工具。
+install_tools_to_lfs 'attr' '--disable-static  \
+            --sysconfdir=/etc \
+            --docdir=/usr/share/doc/attr-2.5.1' '&& make check' ''
+
+# 安装 Acl. Acl 软件包包含管理访问控制列表的工具，访问控制列表能够更细致地自由定义文件和目录的访问权限。 
+install_tools_to_lfs 'acl' '--disable-static      \
+            --docdir=/usr/share/doc/acl-2.3.1'
+
+# 安装 Libcap. Libcap 软件包为 Linux 内核提供的 POSIX 1003.1e 权能字实现用户接口。这些权能字是 root 用户的最高特权分割成的一组不同权限。 
+start_tool libcap
+# 防止静态库的安装：
+sed -i '/install -m.*STA/d' libcap/Makefile
+# 编译该软件包：
+make prefix=/usr lib=lib
+# 运行以下命令以测试编译结果：
+make test
+# 安装该软件包：
+make prefix=/usr lib=lib install
+# 调整共享库的权限模式：
+chmod -v 755 /usr/lib/lib{cap,psx}.so.2.51
+end_tool libcap
+
+# 安装 Shadow. Shadow 软件包包含安全地处理密码的程序。
+start_tool shadow
+# 禁止该软件包安装 groups 程序和它的 man 页面，因为 Coreutils 会提供更好的版本。同样，避免安装第 8.3 节 “Man-pages-5.12”软件包已经提供的 man 页面：
+sed -i 's/groups$(EXEEXT) //' src/Makefile.in
+find man -name Makefile.in -exec sed -i 's/groups\.1 / /'   {} \;
+find man -name Makefile.in -exec sed -i 's/getspnam\.3 / /' {} \;
+find man -name Makefile.in -exec sed -i 's/passwd\.5 / /'   {} \;
+# 不使用默认的 crypt 加密方法，使用更安全的 SHA-512 方法加密密码，该方法也允许长度超过 8 个字符的密码。还需要把过时的用户邮箱位置 /var/spool/mail 改为当前普遍使用的 /var/mail 目录。另外，从默认的 PATH 中删除/bin 和 /sbin，因为它们只是指向 /usr 中对应目录的符号链接： 
+sed -e 's:#ENCRYPT_METHOD DES:ENCRYPT_METHOD SHA512:' \
+    -e 's:/var/spool/mail:/var/mail:'                 \
+    -e '/PATH=/{s@/sbin:@@;s@/bin:@@}'                \
+    -i etc/login.defs
+# 进行微小的改动，使 useradd 使用 1000 作为第一个组编号：
+sed -i 's/1000/999/' etc/useradd
+# 准备编译 Shadow：
+touch /usr/bin/passwd
+./configure --sysconfdir=/etc \
+            --with-group-name-max-length=32
+# 编译该软件包：
+make
+# 安装该软件包：
+make exec_prefix=/usr install
+end_tool shadow
+# 配置 Shadow 
+# 为用户 root 选择一个密码，并执行以下命令设定它：
+passwd root 
+
+# 安装 GCC(第三次) 
+# 应用补丁以修复一些退化问题，并解除对于 linux-5.13 中移除的过时内核头文件的依赖：
+start_tool gcc
+patch -Np1 -i ../gcc-11.1.0-upstream_fixes-1.patch
+# 在 x86_64 上构建时，修改存放 64 位库的默认路径为 “lib”:
+case $(uname -m) in
+  x86_64)
+    sed -e '/m64=/s/lib64/lib/' \
+        -i.orig gcc/config/i386/t-linux64
+  ;;
+esac
+# GCC 文档推荐在专用的构建目录中构建 GCC：
+mkdir -v build
+cd build
+# 准备编译 GCC： 
+../configure --prefix=/usr            \
+             LD=ld                    \
+             --enable-languages=c,c++ \
+             --disable-multilib       \
+             --disable-bootstrap      \
+             --with-system-zlib
+# 编译该软件包：
+make
+# 已知 GCC 测试套件中的一组测试可能耗尽默认栈空间，因此运行测试前要增加栈空间：
+ulimit -s 32768
+# 以非特权用户身份测试编译结果，但出错时继续执行其他测试：
+chown -Rv tester . 
+su tester -c "PATH=$PATH make -k check"
+# 输入以下命令查看测试结果的摘要：
+../contrib/test_summary
+
+cd ..
+end_tool gcc
+
+
+
+install_tools_to_lfs () {
+  local pkg_name=$1
+  local before=$2
+  local conf=$3
+  local mk_conf=$4
+  local after=$5
+  echo "install $pkg_name"
+
+  echo "./configure --prefix=/usr   \
+              $conf"
+  read
+  echo "make $mk_conf"
+  read
+  echo "make install $install_conf"
+  read
+  
+  start_tool $pkg_name 
+  echo "prepare compile $pkg_name"  
+  bash -c "./configure --prefix=/usr   \
+         $conf"
+  echo "compile $pkg_name"
+  bash -c "make $mk_conf"
+  echo "install $pkg_name"
+  bash -c "make install $install_conf"
+  if [ ! -z "$5" ]; then
+    echo "$5"
+    read
+    bash -c "$5"
+  fi
+  end_tool patch
+}
+
+
+
