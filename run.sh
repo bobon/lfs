@@ -1727,11 +1727,156 @@ chown -Rv tester .
 su tester -c "PATH=$PATH make -k check"
 # 输入以下命令查看测试结果的摘要：
 ../contrib/test_summary
-
+# 安装该软件包，并移除一个不需要的目录：
+make install
+rm -rf /usr/lib/gcc/$(gcc -dumpmachine)/11.1.0/include-fixed/bits/
+# GCC 构建目录目前属于用户 tester，这会导致安装的头文件目录 (及其内容) 具有不正确的所有权。将所有者修改为 root 用户和组：
+chown -v -R root:root /usr/lib/gcc/*linux-gnu/11.1.0/include{,-fixed}
+# 创建一个 FHS 因 “历史原因” 要求的符号链接。
+ln -svr /usr/bin/cpp /usr/lib
+# 创建一个兼容性符号链接，以支持在构建程序时使用链接时优化 (LTO)：
+ln -sfv ../../libexec/gcc/$(gcc -dumpmachine)/11.1.0/liblto_plugin.so \
+        /usr/lib/bfd-plugins/
+# 现在最终的工具链已经就位，重要的是再次确认编译和链接像我们期望的一样正常工作。我们通过进行一些完整性检查，进行确认：
+echo 'int main(){}' > dummy.c
+cc dummy.c -v -Wl,--verbose &> dummy.log
+# 动态链接器名称
+readelf -l a.out | grep ': /lib' | grep '[Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]'
+# 下面确认我们的设定能够使用正确的启动文件：
+# gcc 应该找到所有三个 crt*.o 文件，它们应该位于 /usr/lib 目录中。 
+echo '/usr/lib/gcc/x86_64-pc-linux-gnu/11.1.0/../../../../lib/crt1.o succeeded
+/usr/lib/gcc/x86_64-pc-linux-gnu/11.1.0/../../../../lib/crti.o succeeded
+/usr/lib/gcc/x86_64-pc-linux-gnu/11.1.0/../../../../lib/crtn.o succeeded' | diff - <(grep -o '/usr/lib.*/crt[1in].*succeeded' dummy.log)
+# 确认编译器能正确查找头文件：
+echo '#include <...> search starts here:
+ /usr/lib/gcc/x86_64-pc-linux-gnu/11.1.0/include
+ /usr/local/include
+ /usr/lib/gcc/x86_64-pc-linux-gnu/11.1.0/include-fixed
+ /usr/include' | diff - <(grep -B4 '^ /usr/include' dummy.log)
+# 确认新的链接器使用了正确的搜索路径：
+echo 'SEARCH_DIR("/usr/x86_64-pc-linux-gnu/lib64")
+SEARCH_DIR("/usr/local/lib64")
+SEARCH_DIR("/lib64")
+SEARCH_DIR("/usr/lib64")
+SEARCH_DIR("/usr/x86_64-pc-linux-gnu/lib")
+SEARCH_DIR("/usr/local/lib")
+SEARCH_DIR("/lib")
+SEARCH_DIR("/usr/lib");' | diff - <(grep 'SEARCH.*/usr/lib' dummy.log |sed 's|; |\n|g')
+# 确认我们使用了正确的 libc：
+grep "/lib.*/libc.so.6 " dummy.log | grep 'attempt to open /usr/lib/libc.so.6 succeeded'
+# 确认 GCC 使用了正确的动态链接器：
+grep found dummy.log | grep 'found ld-linux-x86-64.so.2 at /usr/lib/ld-linux-x86-64.so.2'
+# 在确认一切工作良好后，删除测试文件：
+rm -v dummy.c a.out dummy.log
+# 最后移动一个位置不正确的文件：
+mkdir -pv /usr/share/gdb/auto-load/usr/lib
+mv -v /usr/lib/*gdb.py /usr/share/gdb/auto-load/usr/lib
 cd ..
 end_tool gcc
 
+# 安装 Pkg-config. pkg-config 软件包提供一个在软件包安装的配置和编译阶段，向构建工具传递头文件和/或库文件路径的工具。
+install_tools_to_lfs () {
+  local pkg_name=$1
+  local before=$2
+  local conf=$3
+  local mk_conf=$4
+  local after=$5
+  echo "install $pkg_name"
 
+  if [ ! -z "$before" ]; then
+    echo "$before"
+    read  
+  fi
+  echo "./configure --prefix=/usr   \
+              $conf"
+  read
+  echo "make $mk_conf"
+  read
+  if [ ! -z "$after" ]; then
+    echo "$after"
+    read  
+  fi
+  
+  start_tool $pkg_name 
+  echo "prepare compile $pkg_name"
+  if [ ! -z "$before" ]; then
+    bash -c "$before"
+  fi  
+  bash -c "./configure --prefix=/usr   \
+         $conf"
+  echo "compile and install $pkg_name"
+  bash -c "make $mk_conf"
+  if [ ! -z "$after" ]; then
+    bash -c "$after"
+  fi
+  end_tool patch
+}
+
+install_tools_to_lfs 'pkg-config' '' '--with-internal-glib       \
+            --disable-host-tool        \
+            --docdir=/usr/share/doc/pkg-config-0.29.2' '&& make check && make install'
+
+# 安装 Ncurses. Ncurses 软件包包含使用时不需考虑终端特性的字符屏幕处理函数库。 
+install_tools_to_lfs 'ncurses' '' '--mandir=/usr/share/man \
+            --with-shared           \
+            --without-debug         \
+            --without-normal        \
+            --enable-pc-files       \
+            --enable-widec' '&& make install' 'mkdir -v       /usr/share/doc/ncurses-6.2 && cp -v -R doc/* /usr/share/doc/ncurses-6.2'
+# 许多程序仍然希望链接器能够找到非宽字符版本的 Ncurses 库。通过使用符号链接和链接脚本，诱导它们链接到宽字符库：
+for lib in ncurses form panel menu ; do
+    rm -vf                    /usr/lib/lib${lib}.so
+    echo "INPUT(-l${lib}w)" > /usr/lib/lib${lib}.so
+    ln -sfv ${lib}w.pc        /usr/lib/pkgconfig/${lib}.pc
+done
+# 最后，确保那些在构建时寻找 -lcurses 的老式程序仍然能够构建：
+rm -vf                     /usr/lib/libcursesw.so
+echo "INPUT(-lncursesw)" > /usr/lib/libcursesw.so
+ln -sfv libncurses.so      /usr/lib/libcurses.so
+# 删除一个 configure 脚本未处理的静态库：
+rm -fv /usr/lib/libncurses++w.a
+# 上述指令没有创建非宽字符的 Ncurses 库，因为从源码编译的软件包不会在运行时链接到它。然而，已知的需要链接到非宽字符 Ncurses 库的二进制程序都需要版本 5。如果您为了满足一些仅有二进制版本的程序，或者满足 LSB 兼容性，必须安装这样的库，执行以下命令再次构建该软件包：
+install_tools_to_lfs 'ncurses' 'make distclean' '--with-shared    \
+            --without-normal \
+            --without-debug  \
+            --without-cxx-binding \
+            --with-abi-version=5' 'sources libs' 'cp -av lib/lib*.so.5* /usr/lib'
+
+# 安装 Sed. 
+install_tools_to_lfs 'sed' '' '' '&& make html && chown -Rv tester . && su tester -c "PATH=$PATH make check" && make install' \
+ 'install -d -m755           /usr/share/doc/sed-4.8 && install -m644 doc/sed.html /usr/share/doc/sed-4.8' 
+
+# 安装 Psmisc. Psmisc 软件包包含显示正在运行的进程信息的程序。 
+install_tools_to_lfs 'psmisc' '' '' '&& make install'
+
+# 安装 Gettext. Gettext 软件包包含国际化和本地化工具，它们允许程序在编译时加入 NLS (本地语言支持) 功能，使它们能够以用户的本地语言输出消息。
+install_tools_to_lfs 'gettext' '' '--disable-static \
+            --docdir=/usr/share/doc/gettext-0.21' '&& make check && make install && chmod -v 0755 /usr/lib/preloadable_libintl.so'
+
+# 安装 Bison. Bison 软件包包含语法分析器生成器。 
+install_tools_to_lfs 'bison' '' '--docdir=/usr/share/doc/bison-3.7.6' '&& make check && make install'
+
+# Grep
+install_tools_to_lfs 'grep' '' '' '&& make check && make install'
+
+# 安装 Bash. 
+install_tools_to_lfs 'bash' '' '--docdir=/usr/share/doc/bash-5.1.8 \
+            --without-bash-malloc            \
+            --with-installed-readline' '&& chown -Rv tester . && su tester -c "PATH=$PATH make tests < $(tty)" && make install'
+# 执行新编译的 bash 程序 (替换当前正在执行的版本)：
+exec /bin/bash --login +h
+
+start_tool() {
+  local tool_xz=$(ls ${1}*.tar.?z)
+  tar -xf $tool_xz
+  cd ${tool_xz:0:-7}
+}
+
+end_tool() {
+  cd ../
+  local tool_xz=$(ls ${1}*.tar.?z)
+  rm -rf ${tool_xz:0:-7}
+}
 
 install_tools_to_lfs () {
   local pkg_name=$1
@@ -1741,29 +1886,63 @@ install_tools_to_lfs () {
   local after=$5
   echo "install $pkg_name"
 
+  if [ ! -z "$before" ]; then
+    echo "$before"
+    read  
+  fi
   echo "./configure --prefix=/usr   \
               $conf"
   read
   echo "make $mk_conf"
   read
-  echo "make install $install_conf"
-  read
+  if [ ! -z "$after" ]; then
+    echo "$after"
+    read  
+  fi
   
   start_tool $pkg_name 
-  echo "prepare compile $pkg_name"  
+  echo "prepare compile $pkg_name"
+  if [ ! -z "$before" ]; then
+    bash -c "$before"
+  fi  
   bash -c "./configure --prefix=/usr   \
          $conf"
-  echo "compile $pkg_name"
+  echo "compile and install $pkg_name"
   bash -c "make $mk_conf"
-  echo "install $pkg_name"
-  bash -c "make install $install_conf"
-  if [ ! -z "$5" ]; then
-    echo "$5"
-    read
-    bash -c "$5"
+  if [ ! -z "$after" ]; then
+    bash -c "$after"
   fi
   end_tool patch
 }
 
+# 安装 Libtool. Libtool 软件包包含 GNU 通用库支持脚本。它在一个一致、可移植的接口下隐藏了使用共享库的复杂性。 
+install_tools_to_lfs 'libtool' '' '' '&& make install' 'rm -fv /usr/lib/libltdl.a'
+
+# 安装 GDBM. GDBM 软件包包含 GNU 数据库管理器。它是一个使用可扩展散列的数据库函数库，工作方法和标准 UNIX dbm 类似。该库提供用于存储键值对、通过键搜索和获取数据，以及删除键和对应数据的原语。 
+install_tools_to_lfs 'gdbm' '' '--disable-static \
+            --enable-libgdbm-compat' '&& make check && make install'
+
+#  安装 Gperf. Gperf 根据一组键值，生成完美散列函数。
+install_tools_to_lfs 'gperf' '' '--docdir=/usr/share/doc/gperf-3.1' '&& make -j1 check && make install'
+
+# 安装 Expat. Expat 软件包包含用于解析 XML 文件的面向流的 C 语言库。
+install_tools_to_lfs 'expat' '' '--disable-static \
+            --docdir=/usr/share/doc/expat-2.4.1' '&& make check && make install' 'install -v -m644 doc/*.{html,png,css} /usr/share/doc/expat-2.4.1'
+
+# 安装 Inetutils. Inetutils 软件包包含基本网络程序。 
+install_tools_to_lfs 'inetutils' '' '--bindir=/usr/bin    \
+            --localstatedir=/var \
+            --disable-logger     \
+            --disable-whois      \
+            --disable-rcp        \
+            --disable-rexec      \
+            --disable-rlogin     \
+            --disable-rsh        \
+            --disable-servers' '&& make check && make install' 'mv -v /usr/{,s}bin/ifconfig'
+
+# 安装 Less. Less 软件包包含一个文本文件查看器。 
+install_tools_to_lfs 'less' '' '--sysconfdir=/etc' '&& make install'
+
+# 安装 Perl 
 
 
