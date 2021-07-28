@@ -106,6 +106,7 @@ https://www.linuxfromscratch.org/patches/lfs/development/glibc-2.33-fhs-1.patch
 https://www.linuxfromscratch.org/patches/lfs/development/gcc-11.1.0-upstream_fixes-1.patch
 https://www.linuxfromscratch.org/patches/lfs/development/kbd-2.4.0-backspace-1.patch
 https://www.linuxfromscratch.org/patches/lfs/development/kbd-2.4.0-backspace-1.patch
+https://www.linuxfromscratch.org/patches/lfs/development/perl-5.34.0-upstream_fixes-1.patch
 https://www.linuxfromscratch.org/patches/lfs/development/sysvinit-2.99-consolidated-1.patch
 EOF
 
@@ -115,6 +116,7 @@ cd8ebed2a67fff2e231026df91af6776  coreutils-8.32-i18n-1.patch
 9a5997c3452909b1769918c759eff8a2  glibc-2.33-fhs-1.patch
 27266d2a771f2ff812cb6ec9c8b456b4  gcc-11.1.0-upstream_fixes-1.patch
 f75cca16a38da6caa7d52151f7136895  kbd-2.4.0-backspace-1.patch
+fb42558b59ed95ee00eb9f1c1c9b8056  perl-5.34.0-upstream_fixes-1.patch
 4900322141d493e74020c9cf437b2cdc  sysvinit-2.99-consolidated-1.patch
 EOF
 
@@ -1944,5 +1946,83 @@ install_tools_to_lfs 'inetutils' '' '--bindir=/usr/bin    \
 install_tools_to_lfs 'less' '' '--sysconfdir=/etc' '&& make install'
 
 # 安装 Perl 
+# 首先，应用补丁，以修复该软件包中由较新的 gdbm 版本暴露出的问题：
+start_tool perl
+patch -Np1 -i ../perl-5.34.0-upstream_fixes-1.patch
+# 该版本的 Perl 会构建 Compress::Raw::ZLib 和 Compress::Raw::BZip2 模块。默认情况下 Perl 会使用内部的源码副本构建它们。执行以下命令，使得 Perl 使用系统中已经安装好的库：
+export BUILD_ZLIB=False
+export BUILD_BZIP2=0
+# 为了能够完全控制 Perl 的设置，您可以在以下命令中移除 “-des” 选项，并手动选择构建该软件包的方式。或者，直接使用下面的命令，以使用 Perl 自动检测的默认值：
+sh Configure -des                                         \
+             -Dprefix=/usr                                \
+             -Dvendorprefix=/usr                          \
+             -Dprivlib=/usr/lib/perl5/5.34/core_perl      \
+             -Darchlib=/usr/lib/perl5/5.34/core_perl      \
+             -Dsitelib=/usr/lib/perl5/5.34/site_perl      \
+             -Dsitearch=/usr/lib/perl5/5.34/site_perl     \
+             -Dvendorlib=/usr/lib/perl5/5.34/vendor_perl  \
+             -Dvendorarch=/usr/lib/perl5/5.34/vendor_perl \
+             -Dman1dir=/usr/share/man/man1                \
+             -Dman3dir=/usr/share/man/man3                \
+             -Dpager="/usr/bin/less -isR"                 \
+             -Duseshrplib                                 \
+             -Dusethreads
+# 编译该软件包：
+make
+# 为了测试编译结果 (需要约 11 SBU)，执行以下命令：
+make test
+# 安装该软件包，并清理环境变量：
+make install
+unset BUILD_ZLIB BUILD_BZIP2
+end_tool perl
+
+# 安装 XML::Parser. XML::Parser 模块是 James Clark 的 XML 解析器 Expat 的 Perl 接口。 
+start_tool XML-Parser
+# 准备编译 XML::Parser：
+perl Makefile.PL
+# 编译该软件包：
+make
+# 执行以下命令以测试编译结果：
+make test
+# 安装该软件包：
+make install
+end_tool XML-Parser
+
+# 安装 Intltool. Intltool 是一个从源代码文件中提取可翻译字符串的国际化工具。
+start_tool intltool
+# 首先修复由 perl-5.22 及更新版本导致的警告：
+sed -i 's:\\\${:\\\$\\{:' intltool-update.in
+# 准备编译 Intltool：
+./configure --prefix=/usr
+# 编译该软件包：
+make
+# 运行以下命令以测试编译结果：
+make check
+# 安装该软件包：
+make install
+install -v -Dm644 doc/I18N-HOWTO /usr/share/doc/intltool-0.51.0/I18N-HOWTO
+end_tool intltool
+
+# 安装 Autoconf. Autoconf 软件包包含生成能自动配置软件包的 shell 脚本的程序。 
+install_tools_to_lfs 'autoconf' '' '' '&& make check TESTSUITEFLAGS=-j4 && make install'
+
+# 安装 Automake. Automake 软件包包含自动生成 Makefile，以便和 Autoconf 一同使用的程序。
+install_tools_to_lfs 'automake' "sed -i \"s/''/etags/\" t/tags-lisp-space.sh" '--docdir=/usr/share/doc/automake-1.16.3' '&& make -j4 check || true && make install'
+
+# 安装 Kmod. Kmod 软件包包含用于加载内核模块的库和工具。 
+install_tools_to_lfs 'kmod' '' '--sysconfdir=/etc      \
+            --with-xz              \
+            --with-zstd            \
+            --with-zlib' '&& make install'
+# 创建与 Module-Init-Tools (曾经用于处理 Linux 内核模块的软件包) 兼容的符号链接：
+for target in depmod insmod modinfo modprobe rmmod; do
+  ln -sfv ../bin/kmod /usr/sbin/$target
+done
+ln -sfv kmod /usr/bin/lsmod
+
+# 安装 Libelf. Libelf 是一个处理 ELF (可执行和可链接格式) 文件的库。
+install_tools_to_lfs 'elfutils' '' '--disable-debuginfod         \
+            --enable-libdebuginfod=dummy' '&& make check && make -C libelf install && install -vm644 config/libelf.pc /usr/lib/pkgconfig '
+rm /usr/lib/libelf.a
 
 
