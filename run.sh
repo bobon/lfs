@@ -1870,14 +1870,25 @@ exec /bin/bash --login +h
 
 start_tool() {
   local tool_xz=$(ls ${1}*.tar.?z)
-  tar -xf $tool_xz
-  cd ${tool_xz:0:-7}
+  if [ -z "$tool_xz" ]; then 
+    local tool_xz=$(ls ${1}*.tar.?z2)
+    tar -xf $tool_xz
+    cd ${tool_xz:0:-8}
+  else
+    tar -xf $tool_xz
+    cd ${tool_xz:0:-7}
+  fi  
 }
 
 end_tool() {
   cd ../
   local tool_xz=$(ls ${1}*.tar.?z)
-  rm -rf ${tool_xz:0:-7}
+  if [ -z "$tool_xz" ]; then 
+    local tool_xz=$(ls ${1}*.tar.?z2)
+    rm -rf ${tool_xz:0:-8}
+  else 
+    rm -rf ${tool_xz:0:-7}
+  fi  
 }
 
 install_tools_to_lfs () {
@@ -2025,4 +2036,104 @@ install_tools_to_lfs 'elfutils' '' '--disable-debuginfod         \
             --enable-libdebuginfod=dummy' '&& make check && make -C libelf install && install -vm644 config/libelf.pc /usr/lib/pkgconfig '
 rm /usr/lib/libelf.a
 
+# 安装 Libffi. Libffi 库提供一个可移植的高级编程接口，用于处理不同调用惯例。这允许程序在运行时调用任何给定了调用接口的函数。
+install_tools_to_lfs 'libffi' '' '--disable-static --with-gcc-arch=native' '&& make check && make install'
+
+# 安装 OpenSSL. OpenSSL 软件包包含密码学相关的管理工具和库。它们被用于向其他软件包提供密码学功能，例如 OpenSSH，电子邮件程序和 Web 浏览器 (以访问 HTTPS 站点)。
+start_tool openssl
+./config --prefix=/usr         \
+         --openssldir=/etc/ssl \
+         --libdir=lib          \
+         shared                \
+         zlib-dynamic
+# 编译该软件包：
+make
+# 运行以下命令以测试编译结果：
+make test
+# 一项名为 30-test_afalg.t 的测试在某些内核配置下会失败 (它假定选择了一些未说明的内核配置选项)。
+# 安装该软件包：
+sed -i '/INSTALL_LIBS/s/libcrypto.a libssl.a//' Makefile
+make MANSUFFIX=ssl install
+# 将版本号添加到文档目录名，以和其他软件包保持一致：
+mv -v /usr/share/doc/openssl /usr/share/doc/openssl-1.1.1k
+# 如果需要的话，安装一些额外的文档：
+cp -vfr doc/* /usr/share/doc/openssl-1.1.1k
+end_tool openssl
+
+# 安装 Python 3.9.6
+install_tools_to_lfs 'Python' '' '--enable-shared     \
+            --with-system-expat \
+            --with-system-ffi   \
+            --with-ensurepip=yes \
+            --enable-optimizations' '&& make install'
+# 安装预先格式化的文档
+install -v -dm755 /usr/share/doc/python-3.9.6/html 
+tar --strip-components=1  \
+    --no-same-owner       \
+    --no-same-permissions \
+    -C /usr/share/doc/python-3.9.6/html \
+    -xvf python-3.9.6-docs-html.tar.bz2
+
+# 安装 Ninja. Ninja 是一个注重速度的小型构建系统。
+start_tool ninja
+# 如果您希望 Ninja 能够使用环境变量 NINJAJOBS，执行以下命令，添加这一功能：
+sed -i '/int Guess/a \
+  int   j = 0;\
+  char* jobs = getenv( "NINJAJOBS" );\
+  if ( jobs != NULL ) j = atoi( jobs );\
+  if ( j > 0 ) return j;\
+' src/ninja.cc
+# 构建 Ninja：
+python3 configure.py --bootstrap
+# 运行以下命令以测试编译结果：
+./ninja ninja_test
+./ninja_test --gtest_filter=-SubprocessTest.SetWithLots
+# 安装该软件包：
+install -vm755 ninja /usr/bin/
+install -vDm644 misc/bash-completion /usr/share/bash-completion/completions/ninja
+install -vDm644 misc/zsh-completion  /usr/share/zsh/site-functions/_ninja
+end_tool ninja
+
+# 安装 Meson. Meson 是一个开放源代码构建系统，它的设计保证了非常快的执行速度，和尽可能高的用户友好性。 
+start_tool meson
+# 执行以下命令编译 Meson：
+python3 setup.py build
+# 安装该软件包：
+python3 setup.py install --root=dest
+cp -rv dest/* /
+install -vDm644 data/shell-completions/bash/meson /usr/share/bash-completion/completions/meson
+install -vDm644 data/shell-completions/zsh/_meson /usr/share/zsh/site-functions/_meson
+end_tool meson
+
+#安装 Coreutils. Coreutils 软件包包含用于显示和设定系统基本属性的工具。 
+start_tool coreutils
+# POSIX 要求 Coreutils 中的程序即使在多字节 locale 中也能正确识别字符边界。下面应用一个补丁，以解决 Coreutils 不满足该要求的问题，并修复其他一些国际化相关的 bug：
+patch -Np1 -i ../coreutils-8.32-i18n-1.patch
+# 阻止一个在某些机器上会无限循环的测试：
+sed -i '/test.lock/s/^/#/' gnulib-tests/gnulib.mk
+# 现在准备编译 Coreutils：
+autoreconf -fiv
+FORCE_UNSAFE_CONFIGURE=1 ./configure \
+            --prefix=/usr            \
+            --enable-no-install-program=kill,uptime
+# 编译该软件包：
+make
+# 现在测试套件已经可以运行了。首先运行那些设计为由 root 用户运行的测试：
+make NON_ROOT_USERNAME=tester check-root
+# 之后我们要以 tester 用户身份运行其余测试。然而，某些测试要求测试用户属于至少一个组。为了不跳过这些测试，我们添加一个临时组，并使得 tester 用户成为它的成员：
+echo "dummy:x:102:tester" >> /etc/group
+# 修正访问权限，使得非 root 用户可以编译和运行测试：
+chown -Rv tester . 
+# 现在运行测试：
+su tester -c "PATH=$PATH make RUN_EXPENSIVE_TESTS=yes check || true"
+# 已知名为 test-getlogin 的测试在 LFS chroot 环境中可能失败。
+# 删除临时组：
+sed -i '/dummy/d' /etc/group
+# 安装该软件包：
+make install
+# 将程序移动到 FHS 要求的位置：
+mv -v /usr/bin/chroot /usr/sbin
+mv -v /usr/share/man/man1/chroot.1 /usr/share/man/man8/chroot.8
+sed -i 's/"1"/"8"/' /usr/share/man/man8/chroot.8
+end_tool coreutils
 
