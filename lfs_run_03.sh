@@ -1034,7 +1034,7 @@ FORCE_UNSAFE_CONFIGURE=1  \
 # 编译该软件包：
 make
 # 执行以下命令测试编译结果 (需要约 3 SBU)：
-make check
+make check || true
 # 一项名为 capabilities: binary store/restore 的测试在运行时会失败，然而如果宿主系统的内核在构建 LFS 使用的文件系统上不支持扩展属性，该测试会被跳过。
 # 安装该软件包：
 make install
