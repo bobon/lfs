@@ -1020,3 +1020,24 @@ end_tool kbd
 # 安装 Libpipeline. Libpipeline 软件包包含用于灵活、方便地处理子进程流水线的库。 
 install_tools_to_lfs 'libpipeline' '' '' '&& make check && make install'
 
+# 安装 Make
+install_tools_to_lfs 'make' '' '' '&& make check && make install'
+
+# 安装 Patch
+install_tools_to_lfs 'patch' '' '' '&& make check && make install'
+
+# 安装 Tar 
+start_tool tar
+# 准备编译 Tar：
+FORCE_UNSAFE_CONFIGURE=1  \
+./configure --prefix=/usr
+# 编译该软件包：
+make
+# 执行以下命令测试编译结果 (需要约 3 SBU)：
+make check
+# 一项名为 capabilities: binary store/restore 的测试在运行时会失败，然而如果宿主系统的内核在构建 LFS 使用的文件系统上不支持扩展属性，该测试会被跳过。
+# 安装该软件包：
+make install
+make -C doc install-html docdir=/usr/share/doc/tar-1.34
+end_tool tar
+
