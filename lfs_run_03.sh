@@ -681,16 +681,26 @@ install_tools_to_lfs 'bash' '' '--docdir=/usr/share/doc/bash-5.1.8 \
 exec /bin/bash --login +h
 
 start_tool() {
-  echo "start tool ${1}"
   local tool_xz=$(ls ${1}*.tar.?z)
-  tar -xf $tool_xz
-  cd ${tool_xz:0:-7}
+  if [ -z "$tool_xz" ]; then 
+    local tool_xz=$(ls ${1}*.tar.?z2)
+    tar -xf $tool_xz
+    cd ${tool_xz:0:-8}
+  else
+    tar -xf $tool_xz
+    cd ${tool_xz:0:-7}
+  fi  
 }
 
 end_tool() {
   cd ../
   local tool_xz=$(ls ${1}*.tar.?z)
-  rm -rf ${tool_xz:0:-7}
+  if [ -z "$tool_xz" ]; then 
+    local tool_xz=$(ls ${1}*.tar.?z2)
+    rm -rf ${tool_xz:0:-8}
+  else 
+    rm -rf ${tool_xz:0:-7}
+  fi  
 }
 
 install_tools_to_lfs () {
@@ -939,6 +949,74 @@ mv -v /usr/share/man/man1/chroot.1 /usr/share/man/man8/chroot.8
 sed -i 's/"1"/"8"/' /usr/share/man/man8/chroot.8
 end_tool coreutils
 
+# 安装 Check. Check 是一个 C 语言单元测试框架。
+install_tools_to_lfs 'check' '' '--disable-static' '&& make check && make docdir=/usr/share/doc/check-0.15.2 install'
 
+# 安装 Diffutils. Diffutils 软件包包含显示文件或目录之间差异的程序。 
+install_tools_to_lfs 'diffutils' '' '' '&& make check && make install'
 
+# 安装 Gawk
+install_tools_to_lfs 'gawk' "sed -i 's/extras//' Makefile.in" '' '&& make check && make install && mkdir -v /usr/share/doc/gawk-5.1.0 && cp    -v doc/{awkforai.txt,*.{eps,pdf,jpg}} /usr/share/doc/gawk-5.1.0'
+
+# 安装 Findutils. Findutils 软件包包含用于查找文件的程序。这些程序能够递归地搜索目录树，以及创建、维护和搜索文件数据库 (一般比递归搜索快，但在数据库最近没有更新时不可靠)。 
+install_tools_to_lfs 'findutils' '' '--localstatedir=/var/lib/locate' '&& chown -Rv tester . && su tester -c "PATH=$PATH make check" && make install'
+
+# 安装 Groff. Groff 软件包包含处理和格式化文本的程序。
+start_tool groff
+#Groff 期望环境变量 PAGE 包含默认纸张大小。对于美国用户来说，PAGE=letter 是正确的。对于其他地方的用户，PAGE=A4 可能更好。尽管在编译时配置了默认纸张大小，可以通过写入 “A4” 或 “letter” 到 /etc/papersize 文件，覆盖默认值。 
+# 准备编译 Groff：
+PAGE=A4 ./configure --prefix=/usr
+# 该软件包不支持并行构建。编译该软件包：
+make -j1
+# 安装该软件包：
+make install
+end_tool groff
+
+# 安装 GRUB (不支持UEFI)
+install_tools_to_lfs 'grub' '' '--sbindir=/sbin        \
+            --sysconfdir=/etc      \
+            --disable-efiemu       \
+            --disable-werror' '&& make install && mv -v /etc/bash_completion.d/grub /usr/share/bash-completion/completions'
+
+# 安装 Gzip
+install_tools_to_lfs 'gzip' '' '' '&& make check && make install'
+
+# 安装 IPRoute2. IPRoute2 软件包包含基于 IPv4 的基本和高级网络程序。
+start_tool iproute2
+# 该软件包中的 arpd 程序依赖于 LFS 不安装的 Berkeley DB，因此不会被构建。然而，用于 arpd 的一个目录和它的 man 页面仍会被安装。运行以下命令以防止它们的安装。如果需要使用 arpd 二进制程序，参考 BLFS 手册中的 Berkeley DB 编译说明，它位于 https://www.linuxfromscratch.org/blfs/view/svn/server/db.html。
+sed -i /ARPD/d Makefile
+rm -fv man/man8/arpd.8
+# 还需要禁用两个需要 https://www.linuxfromscratch.org/blfs/view/svn/postlfs/iptables.html 的模块。
+sed -i 's/.m_ipt.o//' tc/Makefile
+# 编译该软件包：
+make
+# 安装该软件包：
+make SBINDIR=/usr/sbin install
+# 如果需要的话，安装文档：
+mkdir -v              /usr/share/doc/iproute2-5.13.0
+cp -v COPYING README* /usr/share/doc/iproute2-5.13.0
+end_tool iproute2
+
+# 安装 Kbd. Kbd 软件包包含按键表文件、控制台字体和键盘工具。 
+start_tool kbd
+# 退格和删除键的行为在 Kbd 软件包的不同按键映射中不一致。以下补丁修复 i386 按键映射中的这个问题：
+patch -Np1 -i ../kbd-2.4.0-backspace-1.patch
+# 删除多余的 resizecons 程序 (它需要已经不存在的 svgalib 提供视频模式文件 —— 一般使用 setfont 即可调整控制台大小) 及其 man 页面。
+sed -i '/RESIZECONS_PROGS=/s/yes/no/' configure
+sed -i 's/resizecons.8 //' docs/man/man8/Makefile.in
+# 准备编译 Kbd：
+./configure --prefix=/usr --disable-vlock
+# 编译该软件包：
+make
+# 运行以下命令以测试编译结果：
+make check
+# 安装该软件包：
+make install
+# 如果需要的话，安装文档：
+mkdir -v            /usr/share/doc/kbd-2.4.0
+cp -R -v docs/doc/* /usr/share/doc/kbd-2.4.0
+end_tool kbd
+
+# 安装 Libpipeline. Libpipeline 软件包包含用于灵活、方便地处理子进程流水线的库。 
+install_tools_to_lfs 'libpipeline' '' '' '&& make check && make install'
 
