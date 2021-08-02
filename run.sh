@@ -1903,7 +1903,9 @@ install_tools_to_lfs () {
     echo "$before"
     read  
   fi
-  echo "./configure --prefix=/usr   \
+  local configure_=./configure
+  if [ ! -f "$configure_" ]; then local configure_=../configure; local popd_='cd ..'; fi
+  echo "$configure_ --prefix=/usr   \
               $conf"
   read
   echo "make $mk_conf"
@@ -1916,16 +1918,17 @@ install_tools_to_lfs () {
   start_tool $pkg_name 
   echo "prepare compile $pkg_name"
   if [ ! -z "$before" ]; then
-    bash -c "$before"
+    eval "$before"
   fi  
-  bash -c "./configure --prefix=/usr   \
+  bash -c "$configure_ --prefix=/usr   \
          $conf"
   echo "compile and install $pkg_name"
   bash -c "make $mk_conf"
   if [ ! -z "$after" ]; then
     bash -c "$after"
   fi
-  end_tool patch
+  $popd_
+  end_tool $pkg_name
 }
 
 # 安装 Libtool. Libtool 软件包包含 GNU 通用库支持脚本。它在一个一致、可移植的接口下隐藏了使用共享库的复杂性。 

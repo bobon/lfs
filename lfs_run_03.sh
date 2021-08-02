@@ -60,7 +60,7 @@ install_tools_to_lfs () {
     #read
     bash -c "$5"
   fi
-  end_tool patch
+  end_tool $pkg_name
 }
 
 # 安装 Man-pages. Man-pages 软件包包含 2,200 多个 man 页面。
@@ -448,7 +448,7 @@ install_tools_to_lfs () {
     #read
     bash -c "$5"
   fi
-  end_tool patch
+  end_tool $pkg_name
 }
 
 # 安装 MPFR. MPFR 软件包包含多精度数学函数。 
@@ -623,7 +623,7 @@ install_tools_to_lfs () {
   if [ ! -z "$after" ]; then
     bash -c "$after"
   fi
-  end_tool patch
+  end_tool $pkg_name
 }
 
 install_tools_to_lfs 'pkg-config' '' '--with-internal-glib       \
@@ -715,7 +715,9 @@ install_tools_to_lfs () {
     echo "$before"
     #read  
   fi
-  echo "./configure --prefix=/usr   \
+  local configure_=./configure
+  if [ ! -f "$configure_" ]; then local configure_=../configure; local popd_='cd ..'; fi
+  echo "$configure_ --prefix=/usr   \
               $conf"
   #read
   echo "make $mk_conf"
@@ -728,16 +730,17 @@ install_tools_to_lfs () {
   start_tool $pkg_name 
   echo "prepare compile $pkg_name"
   if [ ! -z "$before" ]; then
-    bash -c "$before"
+    eval "$before"
   fi  
-  bash -c "./configure --prefix=/usr   \
+  bash -c "$configure_ --prefix=/usr   \
          $conf"
   echo "compile and install $pkg_name"
   bash -c "make $mk_conf"
   if [ ! -z "$after" ]; then
     bash -c "$after"
   fi
-  end_tool patch
+  $popd_
+  end_tool $pkg_name
 }
 
 # 安装 Libtool. Libtool 软件包包含 GNU 通用库支持脚本。它在一个一致、可移植的接口下隐藏了使用共享库的复杂性。 
@@ -745,7 +748,7 @@ install_tools_to_lfs 'libtool' '' '' '&& make install' 'rm -fv /usr/lib/libltdl.
 
 # 安装 GDBM. GDBM 软件包包含 GNU 数据库管理器。它是一个使用可扩展散列的数据库函数库，工作方法和标准 UNIX dbm 类似。该库提供用于存储键值对、通过键搜索和获取数据，以及删除键和对应数据的原语。 
 install_tools_to_lfs 'gdbm' '' '--disable-static \
-            --enable-libgdbm-compat' '&& make check && make install'
+            --enable-libgdbm-compat' '&& make check || true && make install'
 
 #  安装 Gperf. Gperf 根据一组键值，生成完美散列函数。
 install_tools_to_lfs 'gperf' '' '--docdir=/usr/share/doc/gperf-3.1' '&& make -j1 check && make install'
@@ -1041,3 +1044,194 @@ make install
 make -C doc install-html docdir=/usr/share/doc/tar-1.34
 end_tool tar
 
+# 安装 Texinfo. Texinfo 软件包包含阅读、编写和转换 info 页面的程序。
+install_tools_to_lfs 'texinfo' '' '' '&& make check && make install && make TEXMF=/usr/share/texmf install-tex'
+# Info 文档系统使用一个纯文本文件保存目录项的列表。该文件位于 /usr/share/info/dir。不幸的是，由于一些软件包 Makefile 中偶然出现的问题，它有时会与系统实际安装的 info 页面不同步。如果需要重新创建 /usr/share/info/dir 文件，可以运行以下命令完成这一工作：
+pushd /usr/share/info
+  rm -v dir
+  for f in *
+    do install-info $f dir 2>/dev/null
+  done
+popd
+
+# 安装 Vim. 
+start_tool vim
+# 修改 vimrc 配置文件的默认位置为 /etc：
+echo '#define SYS_VIMRC_FILE "/etc/vimrc"' >> src/feature.h
+# 准备编译 Vim：
+./configure --prefix=/usr
+# 编译该软件包：
+make
+# 为了准备运行测试套件，需要使得 tester 用户拥有写入源代码目录树的权限：
+chown -Rv tester .
+# 现在，以 tester 用户身份运行测试：
+su tester -c "LANG=en_US.UTF-8 make -j1 test" &> vim-test.log
+grep 'ALL DONE' vim-test.log
+# 测试套件会将大量二进制数据输出到屏幕。这可能扰乱当前终端设置。为了避免这个问题，像上面的命令一样，将输出重定向到日志文件。测试成功完成后，日志文件末尾会包含 “ALL DONE”。
+# 安装该软件包：
+make install
+# 许多用户习惯于使用命令 vi，而不是 vim。为了在用户习惯性地输入 vi 时能够执行 vim，为二进制程序和各种语言的 man 页面创建符号链接：
+ln -sv vim /usr/bin/vi
+for L in  /usr/share/man/{,*/}man1/vim.1; do
+    ln -sv vim.1 $(dirname $L)/vi.1
+done
+# 默认情况下，Vim 的文档安装在 /usr/share/vim 中。下面创建符号链接，使得可以通过 /usr/share/doc/vim-8.2.3001 访问符号链接，这个路径与其他软件包的文档位置格式一致：
+ln -sv ../vim/vim82/doc /usr/share/doc/vim-8.2.3001
+end_tool vim
+# 配置 Vim
+# 默认情况下，vim 在不兼容 vi 的模式下运行。这对于过去使用其他编辑器的用户来说可能显得陌生。以下配置包含的 “nocompatible” 设定是为了强调编辑器使用了新的行为这一事实。它也提醒那些想要使用 “compatible” 模式的用户，必须在配置文件的一开始改变模式。这是因为它会修改其他设置，对这些设置的覆盖必须在设定模式后进行。执行以下命令创建默认 vim 配置文件：
+cat > /etc/vimrc << "EOF"
+" Begin /etc/vimrc
+
+" Ensure defaults are set before customizing settings, not after
+source $VIMRUNTIME/defaults.vim
+let skip_defaults_vim=1 
+
+set nocompatible
+set backspace=2
+set mouse=
+syntax on
+if (&term == "xterm") || (&term == "putty")
+  set background=dark
+endif
+
+" End /etc/vimrc
+EOF
+
+# 安装 Eudev. Eudev 软件包包含动态创建设备节点的程序。
+install_tools_to_lfs 'eudev' '' '--bindir=/usr/sbin      \
+            --sysconfdir=/etc       \
+            --enable-manpages       \
+            --disable-static' '&& mkdir -pv /usr/lib/udev/rules.d && mkdir -pv /etc/udev/rules.d && make check && make install && tar -xvf ../udev-lfs-20171102.tar.xz && make -f udev-lfs-20171102/Makefile.lfs install'
+# 配置 Eudev
+# 硬件设备的相关信息被维护在 /etc/udev/hwdb.d 和 /usr/lib/udev/hwdb.d 目录中。Eudev 需要将这些信息编译到二进制数据库 /etc/udev/hwdb.bin 中。初始化该数据库：
+udevadm hwdb --update
+# 每次硬件信息有更新时，都要运行该命令。 
+
+# 安装 Man-DB. Man-DB 软件包包含查找和阅读 man 页面的程序。
+install_tools_to_lfs 'man-db' '' '--docdir=/usr/share/doc/man-db-2.9.4 \
+            --sysconfdir=/etc                    \
+            --disable-setuid                     \
+            --enable-cache-owner=bin             \
+            --with-browser=/usr/bin/lynx         \
+            --with-vgrind=/usr/bin/vgrind        \
+            --with-grap=/usr/bin/grap            \
+            --with-systemdtmpfilesdir=           \
+            --with-systemdsystemunitdir=' '&& make check && make install'
+
+# 安装 Procps-ng. Procps-ng 软件包包含监视进程的程序。
+if [ -f procps-ng-3.3.17.tar.xz ]; then mv -vf procps-ng-3.3.17.tar.xz procps-3.3.17.tar.xz; fi
+install_tools_to_lfs 'procps' '' '--docdir=/usr/share/doc/procps-ng-3.3.17 \
+            --disable-static                         \
+            --disable-kill' '&& make check || true && make install'
+
+# 安装 Util-linux. Util-linux 软件包包含若干工具程序。这些程序中有处理文件系统、终端、分区和消息的工具。 
+start_tool util-linux-2
+# 准备安装 Util-linux：
+./configure ADJTIME_PATH=/var/lib/hwclock/adjtime   \
+            --libdir=/usr/lib    \
+            --docdir=/usr/share/doc/util-linux-2.37 \
+            --disable-chfn-chsh  \
+            --disable-login      \
+            --disable-nologin    \
+            --disable-su         \
+            --disable-setpriv    \
+            --disable-runuser    \
+            --disable-pylibmount \
+            --disable-static     \
+            --without-python     \
+            --without-systemd    \
+            --without-systemdsystemunitdir \
+            runstatedir=/run
+# 编译该软件包：
+make
+# 以非 root 用户身份运行测试套件： 
+#  一项测试依赖于特定内核配置。如果 CONFIG_USER_NS 或 CONFIG_PID_NS 没有设定，该测试会陷入无限等待状态。删除这项测试，以绕过这个问题：
+rm tests/ts/lsns/ioctl_ns
+chown -Rv tester .
+su tester -c "make -k check"
+# 安装该软件包：
+make install
+# 最后，安装 man 页面：
+tar -xf ../util-linux-man-pages-2.37.tar.xz --directory /usr/share/man --strip-components=1
+end_tool util-linux-2
+
+# 安装 E2fsprogs. E2fsprogs 软件包包含处理 ext2 文件系统的工具。此外它也支持 ext3 和 ext4 日志文件系统。
+install_tools_to_lfs 'e2fsprogs' 'mkdir -v build && cd build' '--sysconfdir=/etc       \
+             --enable-elf-shlibs     \
+             --disable-libblkid      \
+             --disable-libuuid       \
+             --disable-uuidd         \
+             --disable-fsck' '&& make check || true && make install' \
+             'gunzip -v /usr/share/info/libext2fs.info.gz && install-info --dir-file=/usr/share/info/dir /usr/share/info/libext2fs.info && makeinfo -o      doc/com_err.info ../lib/et/com_err.texinfo && install -v -m644 doc/com_err.info /usr/share/info && install-info --dir-file=/usr/share/info/dir /usr/share/info/com_err.info'
+
+# 删除无用的静态库： 
+rm -fv /usr/lib/{libcom_err,libe2p,libext2fs,libss}.a
+
+# 安装 Sysklogd. Sysklogd 软件包包含记录系统消息的程序，例如在意外情况发生时内核给出的消息。 
+start_tool sysklogd
+# 首先，修复 klogd 中在特定情况下会发生段错误的问题，并改正一个已弃用的程序结构：
+sed -i '/Error loading kernel symbols/{n;n;d}' ksym_mod.c
+sed -i 's/union wait/int/' syslogd.c
+# 编译该软件包：
+make
+# 安装该软件包：
+make BINDIR=/sbin install
+end_tool sysklogd
+# 配置 Sysklogd
+# 执行以下命令，创建一个新的 /etc/syslog.conf 文件：
+cat > /etc/syslog.conf << "EOF"
+# Begin /etc/syslog.conf
+
+auth,authpriv.* -/var/log/auth.log
+*.*;auth,authpriv.none -/var/log/sys.log
+daemon.* -/var/log/daemon.log
+kern.* -/var/log/kern.log
+mail.* -/var/log/mail.log
+user.* -/var/log/user.log
+*.emerg *
+
+# End /etc/syslog.conf
+EOF
+
+# 安装 Sysvinit. Sysvinit 软件包包含控制系统启动、运行和关闭的程序。
+start_tool sysvinit
+# 首先，应用一个补丁，它会删除 sysvinit 中其他软件包已经安装的程序，使一条消息更加清晰，并修复一个引发编译器警告的问题：
+patch -Np1 -i ../sysvinit-2.99-consolidated-1.patch
+# 编译该软件包：
+make
+# 安装该软件包：
+make install
+end_tool sysvinit
+
+
+
+# 再次移除调试符号
+# 许多程序和库在默认情况下被编译为带有调试符号的二进制文件 (通过使用 gcc 的 -g 选项)。这意味着在调试这些带有调试信息的程序和库时，调试器不仅能给出内存地址，还能给出子程序和变量的名称。 
+# 由于大多数用户永远不会用调试器调试系统软件，可以通过移除它们的调试符号，回收大量磁盘空间。
+
+# 首先将一些库的调试符号保存在单独的文件中。之后在 BLFS 中，如果使用 valgrind 或 gdb 运行退化测试，则需要这些调试信息的存在。
+save_usrlib="ld-2.33.so libc-2.33.so libpthread-2.33.so libthread_db-1.0.so
+             libquadmath.so.0.0.0 libstdc++.so.6.0.29
+             libitm.so.1.0.0 libatomic.so.1.2.0" 
+cd /usr/lib
+for LIB in $save_usrlib; do
+    objcopy --only-keep-debug $LIB $LIB.dbg
+    strip --strip-unneeded $LIB
+    objcopy --add-gnu-debuglink=$LIB.dbg $LIB
+done
+unset LIB save_usrlib
+# 现在即可移除程序和库的调试符号：
+find /usr/lib -type f -name \*.a \
+   -exec strip --strip-debug {} ';'
+find /usr/lib -type f -name \*.so* ! -name \*dbg \
+   -exec strip --strip-unneeded {} ';'
+find /usr/{bin,sbin,libexec} -type f \
+    -exec strip --strip-all {} ';'
+
+
+# 清理系统. 清理在执行测试的过程中遗留的一些文件：
+rm -rf /tmp/*
+
+# 登出
+logout
