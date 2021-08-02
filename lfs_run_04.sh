@@ -177,4 +177,29 @@ CLOCKPARAMS=
 EOF
 
 # 配置 Linux 控制台 
+# 注意
+# /etc/sysconfig/console 文件只控制 Linux 字符控制台的本地化。它和 X 窗口系统，ssh 连接，或者串口终端中的键盘布局设置和终端字体毫无关系。在这些情况下，不存在上述的两项限制。
+
+# 在引导时创建文件. 有时，我们希望在引导时创建一些文件，例如可能需要 /tmp/.ICE-unix 目录。为此，可以在 /etc/sysconfig/createfiles 配置脚本中创建一项。该文件的格式包含在默认配置文件的注释中。
+
+# 配置 sysklogd 脚本
+# sysklogd 脚本启动 sysklogd 程序，这是 System V 初始化过程的一部分。-m 0 选项关闭 sysklogd 每 20 分钟写入日志文件的时间戳。如果您希望启用这个周期性时间戳标志，编辑 /etc/sysconfig/rc.site，将 SYSKLOGD_PARMS 定义为您希望的值。例如，如果要删除所有参数，将该变量设定为空：
+# SYSKLOGD_PARMS=
+
+# rc.site 文件
+# 可选的 /etc/sysconfig/rc.site 文件包含了为每个 System V 引导脚本自动设定的配置。/etc/sysconfig/ 目录中 hostname，console，以及 clock 文件中的变量值也可以在这里设定。如果这些分立的文件和 rc.site 包含相同的变量名，则分立文件中的设定被优先使用。
+# rc.site 也包含自定义引导过程其他属性的参数。设定 IPROMPT 变量会启用引导脚本的选择性执行。其他选项在文件注释中描述。
+
+# 自定义引导和关机脚本
+# LFS 引导脚本能够较为高效地引导和关闭系统，但是您仍然可以微调 rc.site 文件以进一步提高速度，或根据您的个人品味调整引导消息。为此，需要修改上面给出的/etc/sysconfig/rc.site 文件。 
+# 默认配置中，文件系统检查是静默的。这可能看上去像引导过程中的时延。设定变量 VERBOSE_FSCK=y 可以显示 fsck 的输出。 
+sed -i '/VERBOSE_FSCK/s,.*VERBOSE_FSCK.*,VERBOSE_FSCK=yes,' /etc/sysconfig/rc.site
+
+
+# Bash Shell 启动文件 
+# Shell 程序 /bin/bash (之后简称 “shell”) 使用一组启动文件，以帮助创建运行环境。每个文件都有专门的用途，它们可能以不同方式影响登录和交互环境。/etc 中的文件提供全局设定。如果在用户主目录中有对应的文件存在，它可能覆盖全局设定。 
+# 在成功登录后，/bin/login 读取 /etc/passwd 中的 shell 命令行，启动一个交互式登录 shell。通过命令行 (如 [prompt]$/bin/bash) 启动的 shell 是交互式非登录 shell。非交互 shell 通常在运行 shell 脚本时存在，它处理脚本，在执行命令的过程中不等待用户输入，因此是非交互的。 
+# 登录 shell 会读取文件 /etc/profile 和 ~/.bash_profile
+
+
 
