@@ -201,5 +201,122 @@ sed -i '/VERBOSE_FSCK/s,.*VERBOSE_FSCK.*,VERBOSE_FSCK=yes,' /etc/sysconfig/rc.si
 # 在成功登录后，/bin/login 读取 /etc/passwd 中的 shell 命令行，启动一个交互式登录 shell。通过命令行 (如 [prompt]$/bin/bash) 启动的 shell 是交互式非登录 shell。非交互 shell 通常在运行 shell 脚本时存在，它处理脚本，在执行命令的过程中不等待用户输入，因此是非交互的。 
 # 登录 shell 会读取文件 /etc/profile 和 ~/.bash_profile
 
+# 创建 /etc/inputrc 文件 
+cat > /etc/inputrc << "EOF"
+# Begin /etc/inputrc
+# Modified by Chris Lynn <roryo@roryo.dynup.net>
 
+# Allow the command prompt to wrap to the next line
+set horizontal-scroll-mode Off
+
+# Enable 8bit input
+set meta-flag On
+set input-meta On
+
+# Turns off 8th bit stripping
+set convert-meta Off
+
+# Keep the 8th bit for display
+set output-meta On
+
+# none, visible or audible
+set bell-style none
+
+# All of the following map the escape sequence of the value
+# contained in the 1st argument to the readline specific functions
+"\eOd": backward-word
+"\eOc": forward-word
+
+# for linux console
+"\e[1~": beginning-of-line
+"\e[4~": end-of-line
+"\e[5~": beginning-of-history
+"\e[6~": end-of-history
+"\e[3~": delete-char
+"\e[2~": quoted-insert
+
+# for xterm
+"\eOH": beginning-of-line
+"\eOF": end-of-line
+
+# for Konsole
+"\e[H": beginning-of-line
+"\e[F": end-of-line
+
+# End /etc/inputrc
+EOF
+
+# 创建 /etc/shells 文件
+cat > /etc/shells << "EOF"
+# Begin /etc/shells
+
+/bin/sh
+/bin/bash
+
+# End /etc/shells
+EOF
+
+# 使 LFS 系统可引导
+# 创建 /etc/fstab 文件，为新的 LFS 系统构建内核，以及安装 GRUB 引导加载器，使得系统引导时可以选择进入 LFS 系统。 
+# 创建 /etc/fstab 文件
+# 一些程序使用 /etc/fstab 文件，以确定哪些文件系统是默认挂载的，和它们应该按什么顺序挂载，以及哪些文件系统在挂载前必须被检查 (确定是否有完整性错误)。参考以下命令，创建一个新的文件系统表：
+cat > /etc/fstab << "EOF"
+# Begin /etc/fstab
+
+# 文件系统     挂载点       类型     选项                转储  检查
+#                                                            顺序
+
+/dev/sda1      /            <fff>    defaults            1     1
+#/dev/<yyy>     swap         swap     pri=1               0     0
+proc           /proc        proc     nosuid,noexec,nodev 0     0
+sysfs          /sys         sysfs    nosuid,noexec,nodev 0     0
+devpts         /dev/pts     devpts   gid=5,mode=620      0     0
+tmpfs          /run         tmpfs    defaults            0     0
+devtmpfs       /dev         devtmpfs mode=0755,nosuid    0     0
+
+# End /etc/fstab
+EOF
+
+# Linux-5.13.1  Linux 内核
+# 构建内核需要三步 —— 配置、编译、安装。
+start_tool linux
+# 运行以下命令，准备编译内核. 该命令确保内核源代码树绝对干净，内核开发组建议在每次编译内核前运行该命令。尽管内核源代码树在解压后应该是干净的，但这并不完全可靠。
+make mrproper
+make defconfig
+# 编译内核映像和模块：
+make
+# 如果内核配置使用了模块，安装它们：
+make modules_install
+# 指向内核映像的路径可能随机器平台的不同而变化。下面使用的文件名可以依照您的需要改变，但文件名的开头应该保持为 vmlinuz，以保证和下一节描述的引导过程自动设定相兼容。下面的命令假定是机器是 x86 体系结构：
+cp -iv arch/x86/boot/bzImage /boot/vmlinuz-5.13.1-lfs-r10.1-124
+# System.map 是内核符号文件，它将内核 API 的每个函数入口点和运行时数据结构映射到它们的地址。它被用于调查分析内核可能出现的问题。执行以下命令安装该文件：
+cp -iv System.map /boot/System.map-5.13.1
+# 内核配置文件 .config 由上述的 make menuconfig 步骤生成，包含编译好的内核的所有配置选项。最好能将它保留下来以供日后参考：
+cp -iv .config /boot/config-5.13.1
+# 安装 Linux 内核文档：
+install -d /usr/share/doc/linux-5.13.1
+cp -r Documentation/* /usr/share/doc/linux-5.13.1
+#  需要注意的是，在内核源代码目录中可能有不属于 root 的文件。在以 root 身份解压源代码包时 (就像我们在 chroot 环境中所做的那样)，这些文件会获得它们之前在软件包创建者的计算机上的用户和组 ID。这一般不会造成问题，因为在安装后通常会删除源代码目录树。然而，Linux 源代码目录树一般会被保留较长时间，这样创建者当时使用的用户 ID 就可能被分配给本机的某个用户，导致该用户拥有内核源代码的写权限。
+#注意,之后在 BLFS 中安装软件包时往往需要修改内核配置。因此，和其他软件包不同，我们在安装好内核后可以不移除源代码树。
+#如果要保留内核源代码树，切换到内核源代码目录，执行 chown -R 0:0，以保证 linux-5.13.1 目录中所有文件都属于 root。
+chown -R 0:0 ./
+# 配置 Linux 内核模块加载顺序 
+# 多数情况下 Linux 内核模块可以自动加载，但有时需要指定加载顺序。负责加载内核模块的程序 modprobe 和 insmod 从 /etc/modprobe.d 下的配置文件中读取加载顺序，例如，如果 USB 驱动程序 (ehci_hcd、ohci_hcd 和 uhci_hcd) 被构建为模块，则必须按照先加载 echi_hcd，再加载 ohci_hcd 和 uhci_hcd 的正确顺序，才能避免引导时出现警告信息。
+# 为此，执行以下命令创建文件 /etc/modprobe.d/usb.conf：
+install -v -m755 -d /etc/modprobe.d
+cat > /etc/modprobe.d/usb.conf << "EOF"
+# Begin /etc/modprobe.d/usb.conf
+
+install ohci_hcd /sbin/modprobe ehci_hcd ; /sbin/modprobe -i ohci_hcd ; true
+install uhci_hcd /sbin/modprobe ehci_hcd ; /sbin/modprobe -i uhci_hcd ; true
+
+# End /etc/modprobe.d/usb.conf
+EOF
+#end_tool linux
+cd ..
+
+# 使用 GRUB 设定引导过程
+#start_tool grub
+#使用 宿主机上的 grub-customizer 代替
+#end_tool grub
 
