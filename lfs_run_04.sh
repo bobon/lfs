@@ -200,6 +200,12 @@ sed -i '/VERBOSE_FSCK/s,.*VERBOSE_FSCK.*,VERBOSE_FSCK=yes,' /etc/sysconfig/rc.si
 # Shell 程序 /bin/bash (之后简称 “shell”) 使用一组启动文件，以帮助创建运行环境。每个文件都有专门的用途，它们可能以不同方式影响登录和交互环境。/etc 中的文件提供全局设定。如果在用户主目录中有对应的文件存在，它可能覆盖全局设定。 
 # 在成功登录后，/bin/login 读取 /etc/passwd 中的 shell 命令行，启动一个交互式登录 shell。通过命令行 (如 [prompt]$/bin/bash) 启动的 shell 是交互式非登录 shell。非交互 shell 通常在运行 shell 脚本时存在，它处理脚本，在执行命令的过程中不等待用户输入，因此是非交互的。 
 # 登录 shell 会读取文件 /etc/profile 和 ~/.bash_profile
+cat > /etc/profile << "EOF"
+# Begin /etc/profile
+export LANG=en_US.UTF-8
+export export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+# End /etc/profile
+EOF
 
 # 创建 /etc/inputrc 文件 
 cat > /etc/inputrc << "EOF"

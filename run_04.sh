@@ -25,3 +25,24 @@ sudo chroot "$LFS" /usr/bin/env -i          \
 # export https_proxy=http://192.168.87.1:80
 # export http_proxy=http://192.168.87.1:80
 # 手工执行 source lfs_run_04_blfs.sh
+# 然后重启，选择进入lfs系统。
+# 进入lsf系统后，配置网卡
+# su - root  # 首先进入root用户操作
+# ip addr #查看网卡名字
+# cd /etc/sysconfig/
+#cat > ifconfig.eth0 << "EOF"
+#ONBOOT=yes
+#IFACE=eno16777736
+#SERVICE=ipv4-static
+#IP=192.168.18.130
+#GATEWAY=192.168.18.1
+#PREFIX=24
+#BROADCAST=192.168.87.255
+#EOF
+
+# 然后在lfs系统里创建lfs组和用户
+#groupadd lfs
+#useradd -g lfs -m -d /home/lfs lfs
+# 为lfs用户配置sudo配置文件
+# echo 'lfs    ALL=(ALL)       ALL' >> /etc/sudoers.d/sudo
+# exit  #退出root

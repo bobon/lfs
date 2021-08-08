@@ -191,3 +191,10 @@ make
 make install &&
 ln -sfv libsudo_util.so.0.0.0 /usr/lib/sudo/libsudo_util.so.0
 end_tool sudo
+# 配置sudo
+# A couple of common configuration changes are to set the path for the super user and to allow members of the wheel group to execute all commands after providing their own credientials. Use the following commands to create the /etc/sudoers.d/sudo configuration file as the root user:
+cat > /etc/sudoers.d/sudo << "EOF"
+Defaults secure_path="/usr/bin:/bin:/usr/sbin:/sbin"
+%wheel ALL=(ALL) ALL
+EOF
+
