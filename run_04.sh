@@ -21,3 +21,4 @@ sudo chroot "$LFS" /usr/bin/env -i          \
     /bin/bash --login
 
 # 手工执行 source lfs_run_04.sh
+# 手工执行 source lfs_run_04_01.sh

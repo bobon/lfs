@@ -266,7 +266,7 @@ cat > /etc/fstab << "EOF"
 # 文件系统     挂载点       类型     选项                转储  检查
 #                                                            顺序
 
-/dev/sda1      /            <fff>    defaults            1     1
+/dev/sdb1      /            ext4     defaults            1     1
 #/dev/<yyy>     swap         swap     pri=1               0     0
 proc           /proc        proc     nosuid,noexec,nodev 0     0
 sysfs          /sys         sysfs    nosuid,noexec,nodev 0     0
@@ -283,6 +283,34 @@ start_tool linux
 # 运行以下命令，准备编译内核. 该命令确保内核源代码树绝对干净，内核开发组建议在每次编译内核前运行该命令。尽管内核源代码树在解压后应该是干净的，但这并不完全可靠。
 make mrproper
 make defconfig
+# 为vm虚拟机选择硬盘和网卡驱动。 这里会弹出界面，要手工选择。
+# 先在宿主机上查找宿主系统的硬盘和网卡驱动型号
+# sudo lshw -c storage
+# 虚拟机使用scsi硬盘，类型为LSI Logic设备。lshw显示信息：53c1030 PCI-X Fusion-MPT Dual Ultra320 SCSI
+# sudo lshw -c network
+# 虚拟机使用Intel 82545EM Gigabit Ethernet Controller 网卡
+# 因此，执行make menuconfig后，选择如下驱动
+#Device Drivers -> SCSI device support->
+#<*> SCSI disk support
+#<*> SCSI generic support
+#<*> SCSI low-level drivers ->
+#-*- LSI MPT Fusion SAS 3.0 & SAS 2.0 Device Driver
+#(128) LSI MPT Fusion SAS 2.0 Max number of SG Entries (16 - 256)
+#(128) LSI MPT Fusion SAS 3.0 Max number of SG Entries (16 - 256)
+#<*> Legacy MPT2SAS config option
+
+#Device Drivers ->
+#[*] Fusion MPT device support —>
+#--- Fusion MPT device support
+#<*> Fusion MPT ScsiHost drivers for SPI
+#<*> Fusion MPT ScsiHost drivers for SAS
+#(128) Maximum number of scatter gather entries (16 - 128)
+#<*> Fusion MPT misc device (ioctl) driver
+#[*] Fusion MPT logging facility 
+
+# Intel 82545EM Gigabit Ethernet Controller 网卡驱动已经默认被选中，所以不用修改。
+
+make menuconfig
 # 编译内核映像和模块：
 make
 # 如果内核配置使用了模块，安装它们：
@@ -315,8 +343,26 @@ EOF
 #end_tool linux
 cd ..
 
-# 使用 GRUB 设定引导过程
+# 使用 GRUB 设定引导过程。 下述过程较危险，需手工执行
 #start_tool grub
-#使用 宿主机上的 grub-customizer 代替
+# LFS_DISK=/dev/sdb1  lfs系统安装在/dev/sdb上，将 GRUB 文件安装到 /dev/sdb的/boot/grub 并设定引导磁道：
+# grub-install /dev/sdb
+# 生成 /boot/grub/grub.cfg：注意在 /dev/sdb 引导区安装了GRUB，需要在bios里手工切换为/dev/sdb 第一个引导启动。因此set root=(hd0,1)
+#cat > /boot/grub/grub.cfg << "EOF"
+## Begin /boot/grub/grub.cfg
+#set default=0
+#set timeout=5
+#
+#insmod ext2
+#set root=(hd0,1)
+#
+#menuentry "GNU/Linux, Linux 5.13.1-lfs-r10.1-124" {
+#        linux   /boot/vmlinuz-5.13.1-lfs-r10.1-124 root=/dev/sdb1 ro
+#}
+#EOF
+
+# 使用 宿主机上的 grub-customizer 代替，将如上引导信息写入宿主机的启动菜单。
+#在宿主机上执行 sudo grub-customizer  (注意用MoBaXterm自带的Xserver启动此程序时，要先执行 sudo ~/.Xauthority /root/)
+# 将如上引导信息写入宿主机的启动菜单,注意要改为 set root=(hd1,1)   root=/dev/sdb1
 #end_tool grub
 
