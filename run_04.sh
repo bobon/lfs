@@ -21,4 +21,7 @@ sudo chroot "$LFS" /usr/bin/env -i          \
     /bin/bash --login
 
 # 手工执行 source lfs_run_04.sh
-# 手工执行 source lfs_run_04_01.sh
+# 手工设置
+# export https_proxy=http://192.168.87.1:80
+# export http_proxy=http://192.168.87.1:80
+# 手工执行 source lfs_run_04_blfs.sh

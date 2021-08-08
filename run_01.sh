@@ -106,6 +106,8 @@ if [ ! -f "pkg-ok" ] || [ ! -d "$LFS/sources" ]; then
   pushd $LFS/sources
   sed -i '/lfs-bootscripts-20210608.tar.xz/d' md5sums
   md5sum -c md5sums
+  wget -c https://ftp.gnu.org/gnu/wget/wget-1.21.1.tar.gz
+  md5sum wget-1.21.1.tar.gz | grep b939ee54eabc6b9b0a8d5c03ace879c9
   popd
 
 
