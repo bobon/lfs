@@ -454,7 +454,7 @@ install_tools_to_lfs () {
 # 安装 MPFR. MPFR 软件包包含多精度数学函数。 
 install_tools_to_lfs 'mpfr' '--disable-static     \
             --enable-thread-safe \
-            --docdir=/usr/share/doc/mpfr-4.1.0' '&& make html && make check' '&& make install-html'
+            --docdir=/usr/share/doc/mpfr-4.1.0' '&& make html && make check || true' '&& make install-html'
 
 # 安装 MPC. MPC 软件包包含一个任意高精度，且舍入正确的复数算术库。
 install_tools_to_lfs 'mpc' '--disable-static \
@@ -650,7 +650,7 @@ ln -sfv libncurses.so      /usr/lib/libcurses.so
 # 删除一个 configure 脚本未处理的静态库：
 rm -fv /usr/lib/libncurses++w.a
 # 上述指令没有创建非宽字符的 Ncurses 库，因为从源码编译的软件包不会在运行时链接到它。然而，已知的需要链接到非宽字符 Ncurses 库的二进制程序都需要版本 5。如果您为了满足一些仅有二进制版本的程序，或者满足 LSB 兼容性，必须安装这样的库，执行以下命令再次构建该软件包：
-install_tools_to_lfs 'ncurses' 'make distclean' '--with-shared    \
+install_tools_to_lfs 'ncurses' 'make distclean || true' '--with-shared    \
             --without-normal \
             --without-debug  \
             --without-cxx-binding \
