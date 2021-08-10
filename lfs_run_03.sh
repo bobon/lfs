@@ -636,7 +636,7 @@ install_tools_to_lfs 'ncurses' '' '--mandir=/usr/share/man \
             --without-debug         \
             --without-normal        \
             --enable-pc-files       \
-            --enable-widec' '&& make install' 'mkdir -v       /usr/share/doc/ncurses-6.2 && cp -v -R doc/* /usr/share/doc/ncurses-6.2'
+            --enable-widec' '&& make install' 'rm -vf /usr/share/doc/ncurses-6.2 && mkdir -v       /usr/share/doc/ncurses-6.2 && cp -v -R doc/* /usr/share/doc/ncurses-6.2'
 # 许多程序仍然希望链接器能够找到非宽字符版本的 Ncurses 库。通过使用符号链接和链接脚本，诱导它们链接到宽字符库：
 for lib in ncurses form panel menu ; do
     rm -vf                    /usr/lib/lib${lib}.so
